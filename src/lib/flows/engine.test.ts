@@ -95,6 +95,26 @@ describe("matchReplyId", () => {
       ),
     ).toBeNull();
   });
+
+  it("matches button_routes and row_routes in a send_chatbot_reply node", () => {
+    const node = {
+      node_type: "send_chatbot_reply",
+      config: {
+        chatbot_reply_id: "reply_123",
+        button_routes: [
+          { button_id: "btn1", button_text: "Button 1", next_node_key: "to_btn1" },
+          { button_id: "btn2", button_text: "Button 2", next_node_key: "to_btn2" },
+        ],
+        row_routes: [
+          { row_id: "row1", row_title: "Row 1", next_node_key: "to_row1" },
+        ],
+      },
+    };
+    expect(matchReplyId(node, "btn1")).toBe("to_btn1");
+    expect(matchReplyId(node, "btn2")).toBe("to_btn2");
+    expect(matchReplyId(node, "row1")).toBe("to_row1");
+    expect(matchReplyId(node, "btn_missing")).toBeNull();
+  });
 });
 
 describe("matchesKeywordTrigger", () => {

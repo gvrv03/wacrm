@@ -82,6 +82,23 @@ export function matchReplyId(
     }
     return null;
   }
+  if (node.node_type === "send_chatbot_reply") {
+    const btnRoutes = (node.config.button_routes ?? []) as Array<{
+      button_id: string;
+      next_node_key: string;
+    }>;
+    const hitBtn = btnRoutes.find((br) => br.button_id === reply_id);
+    if (hitBtn) return hitBtn.next_node_key;
+
+    const rowRoutes = (node.config.row_routes ?? []) as Array<{
+      row_id: string;
+      next_node_key: string;
+    }>;
+    const hitRow = rowRoutes.find((rr) => rr.row_id === reply_id);
+    if (hitRow) return hitRow.next_node_key;
+
+    return null;
+  }
   return null;
 }
 
@@ -422,6 +439,100 @@ async function sendListAndSuspend(
   return { outcome: "advanced", node_key: node.node_key };
 }
 
+async function sendChatbotReplyAndAdvance(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+): Promise<void> {
+  const cfg = node.config as Record<string, unknown>;
+  const chatbotReplyId = cfg.chatbot_reply_id as string;
+
+  if (!chatbotReplyId) {
+    await logEvent(db, run.id, "error", node.node_key, { reason: "no_chatbot_reply_id" });
+    return;
+  }
+
+  // Fetch the chatbot reply
+  const { data: reply } = await db
+    .from("chatbot_replies")
+    .select("*")
+    .eq("id", chatbotReplyId)
+    .maybeSingle();
+
+  if (!reply) {
+    await logEvent(db, run.id, "error", node.node_key, { reason: "chatbot_reply_not_found" });
+    return;
+  }
+
+  // Send based on reply type using existing infrastructure
+  if (reply.reply_type === "interactive_buttons" && reply.buttons?.length) {
+    const { whatsapp_message_id } = await engineSendInteractiveButtons({
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      bodyText: reply.reply_text,
+      headerText: reply.header_type === "text" ? reply.header_content : undefined,
+      footerText: reply.footer_text || undefined,
+      buttons: (reply.buttons as Array<{ id: string; text: string }>).slice(0, 3).map((b) => ({
+        id: b.id,
+        title: b.text,
+      })),
+    });
+    await logEvent(db, run.id, "message_sent", node.node_key, {
+      node_type: "send_chatbot_reply",
+      reply_type: "interactive_buttons",
+      whatsapp_message_id,
+    });
+  } else if (reply.reply_type === "interactive_list" && reply.list_sections?.length) {
+    const sections = reply.list_sections as Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>;
+    const { whatsapp_message_id } = await engineSendInteractiveList({
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      bodyText: reply.reply_text,
+      buttonLabel: reply.list_button_text || "View Options",
+      headerText: reply.header_type === "text" ? reply.header_content : undefined,
+      footerText: reply.footer_text || undefined,
+      sections: sections.map((s) => ({
+        title: s.title,
+        rows: s.rows.map((r) => ({ id: r.id, title: r.title, description: r.description })),
+      })),
+    });
+    await logEvent(db, run.id, "message_sent", node.node_key, {
+      node_type: "send_chatbot_reply",
+      reply_type: "interactive_list",
+      whatsapp_message_id,
+    });
+  } else {
+    // Text or CTA — send as plain text
+    const { whatsapp_message_id } = await engineSendText({
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      text: reply.reply_text,
+    });
+    await logEvent(db, run.id, "message_sent", node.node_key, {
+      node_type: "send_chatbot_reply",
+      reply_type: reply.reply_type,
+      whatsapp_message_id,
+    });
+  }
+
+  // Store prompt message id for reply routing
+  const { data: lastMsg } = await db
+    .from("messages")
+    .select("id")
+    .eq("conversation_id", run.conversation_id!)
+    .eq("sender_type", "bot")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (lastMsg) {
+    await db.from("flow_runs").update({ last_prompt_message_id: lastMsg.id }).eq("id", run.id);
+  }
+}
+
 async function executeHandoff(
   db: AdminClient,
   run: FlowRunRow,
@@ -731,6 +842,44 @@ async function advanceFromNodeKey(
       await endRun(db, run.id, "completed", "end_node");
       return { outcome: "completed" };
     }
+    if (node.node_type === "send_chatbot_reply") {
+      await sendChatbotReplyAndAdvance(db, run, node);
+      const advanced = await advanceCurrentNodeKey(
+        db,
+        run.id,
+        run.current_node_key,
+        node.node_key,
+      );
+      if (!advanced) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "lost_race_during_advance",
+        });
+      }
+      return { outcome: "advanced" };
+    }
+    if (node.node_type === "api_request") {
+      const next = await executeApiRequest(db, run, node);
+      const advanced = await advanceCurrentNodeKey(
+        db,
+        run.id,
+        run.current_node_key,
+        next || node.node_key,
+      );
+      if (!advanced) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "lost_race_during_advance",
+        });
+      }
+      if (!next) {
+        await endRun(db, run.id, "failed", "api_request_no_failure_path");
+        return { outcome: "completed" };
+      }
+      return { outcome: "advanced" };
+    }
+    if (node.node_type === "wait_send_message") {
+      await scheduleWaitSendMessage(db, run, node);
+      return { outcome: "advanced" };
+    }
     // Unknown node type — shouldn't happen given the CHECK constraint.
     await logEvent(db, run.id, "error", node.node_key, {
       reason: `unknown_node_type:${node.node_type}`,
@@ -886,7 +1035,8 @@ async function handleReplyForActiveRun(
   if (
     message.kind === "interactive_reply" &&
     (currentNode.node_type === "send_buttons" ||
-      currentNode.node_type === "send_list")
+      currentNode.node_type === "send_list" ||
+      currentNode.node_type === "send_chatbot_reply")
   ) {
     matched = matchReplyId(currentNode, message.reply_id);
   } else if (
@@ -1065,4 +1215,139 @@ async function startNewRun(
     flow_run_id: run.id,
     outcome: outcome.outcome === "advanced" ? "started" : outcome.outcome,
   };
+}
+
+// ============================================================
+// API Request node executor
+// ============================================================
+
+/**
+ * Execute an HTTP request, store the response in vars, and return
+ * the next node_key to advance to (success_next or failure_next).
+ * Returns null if no failure_next is configured and the request fails.
+ */
+async function executeApiRequest(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+): Promise<string | null> {
+  const cfg = node.config as Record<string, unknown>;
+  const method = (cfg.method as string) || "GET";
+  const rawUrl = (cfg.url as string) || "";
+  const rawHeaders = (cfg.headers as Record<string, string>) || {};
+  const rawBody = (cfg.body as string) || "";
+  const responseVarKey = (cfg.response_var_key as string) || "api_response";
+  const successNext = (cfg.success_next as string) || "";
+  const failureNext = (cfg.failure_next as string) || "";
+
+  // Interpolate {{vars.X}} in URL, headers, body
+  const vars = (run.vars as Record<string, unknown>) || {};
+  const interpolate = (s: string) =>
+    s.replace(/\{\{vars\.(\w+)\}\}/g, (_, k) => String(vars[k] ?? ""));
+
+  const url = interpolate(rawUrl);
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(rawHeaders)) {
+    if (k.trim()) headers[k] = interpolate(v);
+  }
+  const body = ["POST", "PUT", "PATCH"].includes(method) ? interpolate(rawBody) : undefined;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json", ...headers },
+      body,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    // Parse response (up to 64KB)
+    const contentType = res.headers.get("content-type") || "";
+    let responseValue: unknown = null;
+    const text = await res.text();
+    const truncated = text.slice(0, 65_536);
+    if (contentType.includes("application/json")) {
+      try {
+        responseValue = JSON.parse(truncated);
+      } catch {
+        responseValue = truncated;
+      }
+    } else if (contentType.includes("text/")) {
+      responseValue = truncated;
+    }
+
+    // Store in vars
+    if (responseValue !== null) {
+      const newVars = { ...vars, [responseVarKey]: responseValue };
+      await db.from("flow_runs").update({ vars: newVars }).eq("id", run.id);
+    }
+
+    await logEvent(db, run.id, "node_entered", node.node_key, {
+      node_type: "api_request",
+      method,
+      url,
+      status: res.status,
+    });
+
+    if (res.status >= 200 && res.status < 300) {
+      return successNext || null;
+    }
+    return failureNext || null;
+  } catch (err) {
+    clearTimeout(timeout);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    await logEvent(db, run.id, "error", node.node_key, {
+      node_type: "api_request",
+      reason: "request_failed",
+      detail: message,
+    });
+    return failureNext || null;
+  }
+}
+
+// ============================================================
+// Wait/Schedule Send Message node executor
+// ============================================================
+
+/**
+ * Schedule a wait+send: compute scheduled_send_at and persist on the run.
+ * The cron job will pick it up later and send the message.
+ */
+async function scheduleWaitSendMessage(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+): Promise<void> {
+  const cfg = node.config as Record<string, unknown>;
+  const delayAmount = (cfg.delay_amount as number) || 1;
+  const delayUnit = (cfg.delay_unit as string) || "hours";
+  const timingMode = (cfg.timing_mode as string) || "fixed";
+
+  const unitMs: Record<string, number> = {
+    minutes: 60_000,
+    hours: 3_600_000,
+    days: 86_400_000,
+    weeks: 604_800_000,
+  };
+  const delayMs = delayAmount * (unitMs[delayUnit] || 3_600_000);
+  const baseTs =
+    timingMode === "relative" && run.last_advanced_at
+      ? new Date(run.last_advanced_at).getTime()
+      : Date.now();
+  const scheduledSendAt = new Date(baseTs + delayMs).toISOString();
+
+  await db
+    .from("flow_runs")
+    .update({ scheduled_send_at: scheduledSendAt })
+    .eq("id", run.id);
+
+  await logEvent(db, run.id, "node_entered", node.node_key, {
+    node_type: "wait_send_message",
+    scheduled_send_at: scheduledSendAt,
+    delay_amount: delayAmount,
+    delay_unit: delayUnit,
+  });
 }

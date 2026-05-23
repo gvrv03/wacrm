@@ -68,16 +68,6 @@ export function DataTable<T>({
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const loading = isLoading || isPending;
 
-  // Debounced search
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (search !== searchQuery) {
-        updateParams({ q: search || undefined, page: '1' });
-      }
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [search]);
-
   const updateParams = useCallback(
     (updates: Record<string, string | undefined>) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -94,6 +84,16 @@ export function DataTable<T>({
     },
     [router, pathname, searchParams]
   );
+
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (search !== searchQuery) {
+        updateParams({ q: search || undefined, page: '1' });
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const handleSort = (key: string) => {
     const newOrder = sortBy === key && sortOrder === 'asc' ? 'desc' : 'asc';

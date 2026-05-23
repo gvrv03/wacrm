@@ -63,6 +63,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   // Close sidebar on route change (mobile)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSidebarOpen(false);
   }, [pathname]);
 

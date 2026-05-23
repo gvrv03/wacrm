@@ -163,6 +163,69 @@ export interface SendChatbotReplyNodeConfig {
   row_routes?: Array<{ row_id: string; row_title: string; next_node_key: string }>;
 }
 
+// ============================================================
+// API Request Node
+// ============================================================
+
+export type ApiRequestMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+
+export interface ApiRequestNodeConfig {
+  method: ApiRequestMethod;
+  /** Must start with https://, max 2048 chars. Supports {{vars.X}}. */
+  url: string;
+  /** Header key/value pairs. Each key ≤256, value ≤2048. */
+  headers?: Record<string, string>;
+  /** JSON body as string for POST/PUT/PATCH. Max 32k chars. Supports {{vars.X}}. */
+  body?: string;
+  /** Key under which to store response in flow_runs.vars. */
+  response_var_key: string;
+  /** Node to advance to on 2xx response. */
+  success_next: string;
+  /** Node to advance to on non-2xx, timeout, or network error. */
+  failure_next: string;
+}
+
+// ============================================================
+// Wait / Schedule Message Node
+// ============================================================
+
+export type WaitDelayUnit = "minutes" | "hours" | "days" | "weeks";
+export type WaitTimingMode = "fixed" | "relative";
+export type WaitMessageType =
+  | "text"
+  | "image"
+  | "video"
+  | "audio"
+  | "file"
+  | "location"
+  | "interactive";
+
+export interface WaitMessageContent {
+  /** For text type. */
+  text?: string;
+  /** For image/video/audio/file types. */
+  media_url?: string;
+  /** For location type. */
+  latitude?: number;
+  longitude?: number;
+  location_name?: string;
+  location_address?: string;
+  /** For interactive type — same shape as send_buttons. */
+  buttons?: Array<{ reply_id: string; title: string }>;
+  header_text?: string;
+  footer_text?: string;
+}
+
+export interface WaitSendMessageNodeConfig {
+  /** Integer 1-672 (e.g., max 4 weeks). */
+  delay_amount: number;
+  delay_unit: WaitDelayUnit;
+  timing_mode: WaitTimingMode;
+  message_type: WaitMessageType;
+  message_content: WaitMessageContent;
+  next_node_key: string;
+}
+
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
@@ -180,6 +243,8 @@ export type FlowNodeConfig =
   | { node_type: "send_buttons"; config: SendButtonsNodeConfig }
   | { node_type: "send_list"; config: SendListNodeConfig }
   | { node_type: "send_chatbot_reply"; config: SendChatbotReplyNodeConfig }
+  | { node_type: "api_request"; config: ApiRequestNodeConfig }
+  | { node_type: "wait_send_message"; config: WaitSendMessageNodeConfig }
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }

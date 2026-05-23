@@ -662,6 +662,118 @@ function validateNode(
       break;
     }
 
+    case "api_request": {
+      const cfg = node.config as Record<string, unknown>;
+      const url = typeof cfg.url === "string" ? cfg.url : "";
+      if (!url.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "url",
+          message: "API Request needs a URL.",
+        });
+      } else if (!url.startsWith("https://")) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "url",
+          message: "API Request URL must start with https://",
+        });
+      }
+      const successNext = typeof cfg.success_next === "string" ? cfg.success_next : "";
+      const failureNext = typeof cfg.failure_next === "string" ? cfg.failure_next : "";
+      if (!successNext) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "success_next",
+          message: "API Request needs a success path.",
+        });
+      } else if (!knownKeys.has(successNext)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "success_next",
+          message: `Success path points to non-existent node "${successNext}".`,
+        });
+      }
+      if (!failureNext) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "failure_next",
+          message: "API Request needs a failure path.",
+        });
+      } else if (!knownKeys.has(failureNext)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "failure_next",
+          message: `Failure path points to non-existent node "${failureNext}".`,
+        });
+      }
+      break;
+    }
+
+    case "wait_send_message": {
+      const cfg = node.config as Record<string, unknown>;
+      const delay = typeof cfg.delay_amount === "number" ? cfg.delay_amount : 0;
+      if (delay < 1 || delay > 672) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "delay_amount",
+          message: "Delay must be between 1 and 672.",
+        });
+      }
+      const messageType = typeof cfg.message_type === "string" ? cfg.message_type : "";
+      const content = (cfg.message_content as Record<string, unknown>) || {};
+      if (messageType === "text" && !content.text) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "message_content.text",
+          message: "Wait node text message needs content.",
+        });
+      }
+      if (["image", "video", "audio", "file"].includes(messageType) && !content.media_url) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "message_content.media_url",
+          message: `Wait node ${messageType} needs a media URL.`,
+        });
+      }
+      const nextKey = typeof cfg.next_node_key === "string" ? cfg.next_node_key : "";
+      if (!nextKey) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: "Wait node needs a next node.",
+        });
+      } else if (!knownKeys.has(nextKey)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: `Wait node points to non-existent node "${nextKey}".`,
+        });
+      }
+      break;
+    }
+
     default:
       issues.push({
         severity: "error",
@@ -736,6 +848,22 @@ function outgoingEdges(node: NodeInput): string[] {
         for (const r of s.rows ?? []) {
           if (r.next_node_key) out.push(r.next_node_key);
         }
+      }
+      return out;
+    }
+    case "send_chatbot_reply": {
+      const cfg = node.config as {
+        next_node_key?: string;
+        button_routes?: Array<{ next_node_key?: string }>;
+        row_routes?: Array<{ next_node_key?: string }>;
+      };
+      const out: string[] = [];
+      if (cfg.next_node_key) out.push(cfg.next_node_key);
+      for (const br of cfg.button_routes ?? []) {
+        if (br.next_node_key) out.push(br.next_node_key);
+      }
+      for (const rr of cfg.row_routes ?? []) {
+        if (rr.next_node_key) out.push(rr.next_node_key);
       }
       return out;
     }
