@@ -83,6 +83,7 @@ type NodeType =
   | "send_message"
   | "send_buttons"
   | "send_list"
+  | "send_chatbot_reply"
   | "collect_input"
   | "condition"
   | "set_tag"
@@ -150,7 +151,8 @@ const NODE_META: Record<
     icon: UserPlus,
     color: "text-amber-400",
   },
-  end: { label: "End", icon: Flag, color: "text-slate-400" },
+  end: { label: "End", icon: Flag, color: "text-muted-foreground" },
+  send_chatbot_reply: { label: "Bot Reply", icon: MessageCircle, color: "text-cyan-400" },
 };
 
 // ============================================================
@@ -274,6 +276,10 @@ function summarizeNode(node: BuilderNode): string | null {
       const note = typeof cfg.note === "string" ? cfg.note : "";
       return note.length > 0 ? truncate(note) : null;
     }
+    case "send_chatbot_reply": {
+      const replyId = typeof cfg.chatbot_reply_id === "string" ? cfg.chatbot_reply_id : "";
+      return replyId ? `Bot reply ${replyId.slice(0, 8)}…` : "Select a bot reply";
+    }
   }
 }
 
@@ -322,6 +328,8 @@ function defaultConfigFor(type: NodeType): Record<string, unknown> {
       return { note: "" };
     case "end":
       return {};
+    case "send_chatbot_reply":
+      return { chatbot_reply_id: "", next_node_key: "", button_routes: [], row_routes: [] };
   }
 }
 
@@ -620,14 +628,14 @@ export function FlowBuilder({ initialFlow, initialNodes }: FlowBuilderProps) {
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">
+          <h2 className="text-sm font-semibold text-foreground">
             Nodes ({state.nodes.length})
           </h2>
           <AddNodeButton onAdd={addNode} />
         </div>
 
         {state.nodes.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-700 bg-slate-900/50 p-8 text-center text-sm text-slate-400">
+          <div className="rounded-lg border border-dashed border-border bg-card/50 p-8 text-center text-sm text-muted-foreground">
             Add a <strong>Start</strong> node, then a <strong>Send buttons</strong>
             {" "}node, then a <strong>Handoff</strong> — that&apos;s the welcome-menu
             shape from the brief.
@@ -700,11 +708,11 @@ function Header({
 }) {
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2 text-xs text-slate-500">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1 hover:text-slate-300"
+          className="inline-flex items-center gap-1 hover:text-foreground"
         >
           <ArrowLeft className="h-3 w-3" />
           Flows
@@ -719,7 +727,7 @@ function Header({
               setState((s) => ({ ...s, name: e.target.value }))
             }
             placeholder="Flow name"
-            className="max-w-md bg-slate-900 text-lg font-semibold"
+            className="max-w-md bg-card text-lg font-semibold"
           />
           <StatusBadge status={state.status} />
           {dirty && (
@@ -801,7 +809,7 @@ function Header({
           setState((s) => ({ ...s, description: e.target.value }))
         }
         placeholder="Optional description (internal — customers don't see this)"
-        className="bg-slate-900 text-sm"
+        className="bg-card text-sm"
       />
     </div>
   );
@@ -809,9 +817,9 @@ function Header({
 
 function StatusBadge({ status }: { status: BuilderState["status"] }) {
   const cls = {
-    draft: "border-slate-700 bg-slate-800 text-slate-300",
+    draft: "border-border bg-muted text-foreground",
     active: "border-emerald-600/40 bg-emerald-500/10 text-emerald-300",
-    archived: "border-slate-700 bg-slate-800/50 text-slate-500",
+    archived: "border-border bg-muted/50 text-muted-foreground",
   }[status];
   return (
     <Badge variant="outline" className={cn("shrink-0", cls)}>
@@ -834,11 +842,11 @@ function TriggerPanel({
   triggerIssues: ValidationIssue[];
 }) {
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-      <h2 className="mb-3 text-sm font-semibold text-white">Trigger</h2>
+    <section className="rounded-lg border border-border bg-card p-4">
+      <h2 className="mb-3 text-sm font-semibold text-foreground">Trigger</h2>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-xs text-slate-400">When…</label>
+          <label className="mb-1 block text-xs text-muted-foreground">When…</label>
           <Select
             value={state.trigger_type}
             onValueChange={(v) =>
@@ -850,7 +858,7 @@ function TriggerPanel({
               }))
             }
           >
-            <SelectTrigger className="bg-slate-800">
+            <SelectTrigger className="bg-muted">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -868,7 +876,7 @@ function TriggerPanel({
         </div>
         {state.trigger_type === "keyword" && (
           <div>
-            <label className="mb-1 block text-xs text-slate-400">
+            <label className="mb-1 block text-xs text-muted-foreground">
               Keywords (comma-separated)
             </label>
             <Input
@@ -890,7 +898,7 @@ function TriggerPanel({
                 }))
               }
               placeholder="support, help, hi"
-              className="bg-slate-800"
+              className="bg-muted"
             />
           </div>
         )}
@@ -919,9 +927,9 @@ function EntryPicker({
 }) {
   if (state.nodes.length === 0) return null;
   return (
-    <section className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900 p-3">
+    <section className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
       <CornerDownRight className="h-4 w-4 shrink-0 text-primary" />
-      <span className="text-xs text-slate-400">Entry node:</span>
+      <span className="text-xs text-muted-foreground">Entry node:</span>
       <NodeKeySelect
         value={state.entry_node_id}
         nodes={state.nodes}
@@ -973,12 +981,12 @@ function NodeCard({
     <div
       ref={cardRef}
       className={cn(
-        "rounded-lg border bg-slate-900 transition-shadow duration-500",
+        "rounded-lg border bg-card transition-shadow duration-500",
         hasError
           ? "border-red-500/40"
           : isEntry
             ? "border-primary/50"
-            : "border-slate-800",
+            : "border-border",
         isFlashed &&
           "ring-2 ring-primary ring-offset-2 ring-offset-slate-950",
       )}
@@ -991,10 +999,10 @@ function NodeCard({
         <meta.icon className={cn("h-4 w-4 shrink-0", meta.color)} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-white">
+            <span className="truncate text-sm font-medium text-foreground">
               {meta.label}
             </span>
-            <code className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+            <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
               {node.node_key}
             </code>
             {isEntry && (
@@ -1007,7 +1015,7 @@ function NodeCard({
             )}
           </div>
           {!expanded && preview && (
-            <p className="mt-0.5 truncate text-xs text-slate-500">
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
               {preview}
             </p>
           )}
@@ -1016,20 +1024,20 @@ function NodeCard({
           <CircleAlert className="h-3.5 w-3.5 shrink-0 text-red-400" />
         )}
         {expanded ? (
-          <ChevronUp className="h-4 w-4 text-slate-500" />
+          <ChevronUp className="h-4 w-4 text-muted-foreground" />
         ) : (
-          <ChevronDown className="h-4 w-4 text-slate-500" />
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
         )}
       </button>
       {expanded && (
-        <div className="border-t border-slate-800 px-4 py-4">
+        <div className="border-t border-border px-4 py-4">
           <NodeConfigForm
             node={node}
             allNodes={allNodes}
             onUpdate={onUpdate}
             onUpdateConfig={onUpdateConfig}
           />
-          <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-3">
+          <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
             <div className="flex items-center gap-2">
               {!isEntry && (
                 <Button variant="ghost" size="sm" onClick={onSetEntry}>
@@ -1142,7 +1150,7 @@ function NodeConfigForm({
             rows={2}
           />
           <div>
-            <label className="mb-1 block text-xs text-slate-400">
+            <label className="mb-1 block text-xs text-muted-foreground">
               Variable key (stored in flow_runs.vars; alphanumeric + underscore)
             </label>
             <Input
@@ -1153,11 +1161,11 @@ function NodeConfigForm({
                 })
               }
               placeholder="e.g. name, email, company"
-              className="bg-slate-800 font-mono text-xs"
+              className="bg-muted font-mono text-xs"
             />
-            <p className="mt-1 text-[10px] text-slate-500">
+            <p className="mt-1 text-[10px] text-muted-foreground">
               Interpolate in downstream prompts and handoff notes with{" "}
-              <code className="rounded bg-slate-800 px-1">
+              <code className="rounded bg-muted px-1">
                 {"{{vars."}
                 {(cfg as { var_key?: string }).var_key || "name"}
                 {"}}"}
@@ -1203,17 +1211,26 @@ function NodeConfigForm({
       )}
 
       {node.node_type === "end" && (
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted-foreground">
           Terminal node. When the runner reaches this node the run is marked
           complete. No config needed.
         </p>
       )}
 
-      <div className="border-t border-slate-800 pt-3">
+      {node.node_type === "send_chatbot_reply" && (
+        <ChatbotReplyFlowPicker
+          config={cfg}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+        />
+      )}
+
+      <div className="border-t border-border pt-3">
         <button
           type="button"
           onClick={() => setShowAdvanced((v) => !v)}
-          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         >
           {showAdvanced ? (
             <ChevronUp className="h-3 w-3" />
@@ -1225,7 +1242,7 @@ function NodeConfigForm({
         {showAdvanced && (
           <div className="mt-3 flex flex-col gap-3">
             <div>
-              <label className="mb-1 block text-xs text-slate-400">
+              <label className="mb-1 block text-xs text-muted-foreground">
                 Node key (internal identifier — keep stable for analytics)
               </label>
               <Input
@@ -1233,11 +1250,11 @@ function NodeConfigForm({
                 onChange={(e) =>
                   onUpdate({ node_key: slugify(e.target.value, node.node_key) })
                 }
-                className="bg-slate-800 font-mono text-xs"
+                className="bg-muted font-mono text-xs"
               />
             </div>
             {hasReplyIds && (
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-muted-foreground">
                 Reply IDs for each option are shown inline above. They&apos;re
                 returned by WhatsApp when a customer taps; you usually don&apos;t
                 need to touch them.
@@ -1309,7 +1326,7 @@ function SendButtonsForm({
       />
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <label className="text-xs text-slate-400">
+          <label className="text-xs text-muted-foreground">
             Buttons (1–3) — each one routes to a different next node
           </label>
         </div>
@@ -1318,7 +1335,7 @@ function SendButtonsForm({
             <div
               key={i}
               className={cn(
-                "grid grid-cols-1 gap-2 rounded-md border border-slate-800 bg-slate-800/40 p-3",
+                "grid grid-cols-1 gap-2 rounded-md border border-border bg-muted/40 p-3",
                 showAdvanced
                   ? "md:grid-cols-[1fr_2fr_2fr_auto]"
                   : "md:grid-cols-[2fr_2fr_auto]",
@@ -1333,14 +1350,14 @@ function SendButtonsForm({
                     })
                   }
                   placeholder="reply_id"
-                  className="bg-slate-800 font-mono text-xs"
+                  className="bg-muted font-mono text-xs"
                 />
               )}
               <Input
                 value={b.title}
                 onChange={(e) => updateButton(i, { title: e.target.value })}
                 placeholder="Visible title (≤20 chars)"
-                className="bg-slate-800"
+                className="bg-muted"
                 maxLength={20}
               />
               <NodeKeySelect
@@ -1503,13 +1520,13 @@ function SendListForm({
       </div>
 
       <div className="mt-2">
-        <label className="mb-2 block text-xs text-slate-400">
+        <label className="mb-2 block text-xs text-muted-foreground">
           Rows (1–10 total across all sections)
         </label>
         {sections.map((section, sIdx) => (
           <div
             key={sIdx}
-            className="mb-3 rounded-md border border-slate-800 bg-slate-800/40 p-3"
+            className="mb-3 rounded-md border border-border bg-muted/40 p-3"
           >
             <div className="mb-2 flex items-center gap-2">
               <Input
@@ -1518,7 +1535,7 @@ function SendListForm({
                   updateSection(sIdx, { title: e.target.value })
                 }
                 placeholder={`Section ${sIdx + 1} title (optional)`}
-                className="bg-slate-800 text-xs"
+                className="bg-muted text-xs"
               />
               {sections.length > 1 && (
                 <Button
@@ -1554,7 +1571,7 @@ function SendListForm({
                       })
                     }
                     placeholder="reply_id"
-                    className="bg-slate-800 font-mono text-xs"
+                    className="bg-muted font-mono text-xs"
                   />
                 )}
                 <Input
@@ -1563,7 +1580,7 @@ function SendListForm({
                     updateRow(sIdx, rIdx, { title: e.target.value })
                   }
                   placeholder="Row title (≤24)"
-                  className="bg-slate-800"
+                  className="bg-muted"
                   maxLength={24}
                 />
                 <NodeKeySelect
@@ -1671,14 +1688,14 @@ function ConditionForm({
     <>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div>
-          <label className="mb-1 block text-xs text-slate-400">If</label>
+          <label className="mb-1 block text-xs text-muted-foreground">If</label>
           <Select
             value={subject}
             onValueChange={(v) =>
               onUpdateConfig({ subject: v as ConditionCfg["subject"] })
             }
           >
-            <SelectTrigger className="bg-slate-800">
+            <SelectTrigger className="bg-muted">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1689,7 +1706,7 @@ function ConditionForm({
           </Select>
         </div>
         <div className="md:col-span-2">
-          <label className="mb-1 block text-xs text-slate-400">
+          <label className="mb-1 block text-xs text-muted-foreground">
             {subject === "var"
               ? "var name"
               : subject === "tag"
@@ -1701,7 +1718,7 @@ function ConditionForm({
               value={cfg.subject_key ?? ""}
               onValueChange={(v) => onUpdateConfig({ subject_key: v })}
             >
-              <SelectTrigger className="bg-slate-800">
+              <SelectTrigger className="bg-muted">
                 <SelectValue placeholder="Pick a tag…" />
               </SelectTrigger>
               <SelectContent>
@@ -1717,7 +1734,7 @@ function ConditionForm({
               value={cfg.subject_key ?? ""}
               onValueChange={(v) => onUpdateConfig({ subject_key: v })}
             >
-              <SelectTrigger className="bg-slate-800">
+              <SelectTrigger className="bg-muted">
                 <SelectValue placeholder="Pick a field…" />
               </SelectTrigger>
               <SelectContent>
@@ -1732,7 +1749,7 @@ function ConditionForm({
               value={cfg.subject_key ?? ""}
               onChange={(e) => onUpdateConfig({ subject_key: e.target.value })}
               placeholder={subject === "var" ? "e.g. email" : "tag UUID"}
-              className="bg-slate-800 font-mono text-xs"
+              className="bg-muted font-mono text-xs"
             />
           )}
         </div>
@@ -1745,14 +1762,14 @@ function ConditionForm({
         )}
       >
         <div>
-          <label className="mb-1 block text-xs text-slate-400">Operator</label>
+          <label className="mb-1 block text-xs text-muted-foreground">Operator</label>
           <Select
             value={operator}
             onValueChange={(v) =>
               onUpdateConfig({ operator: v as ConditionCfg["operator"] })
             }
           >
-            <SelectTrigger className="bg-slate-800">
+            <SelectTrigger className="bg-muted">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1765,11 +1782,11 @@ function ConditionForm({
         </div>
         {showValue && (
           <div>
-            <label className="mb-1 block text-xs text-slate-400">Value</label>
+            <label className="mb-1 block text-xs text-muted-foreground">Value</label>
             <Input
               value={cfg.value ?? ""}
               onChange={(e) => onUpdateConfig({ value: e.target.value })}
-              className="bg-slate-800"
+              className="bg-muted"
             />
           </div>
         )}
@@ -1836,14 +1853,14 @@ function SetTagForm({
     <>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-xs text-slate-400">Action</label>
+          <label className="mb-1 block text-xs text-muted-foreground">Action</label>
           <Select
             value={cfg.mode ?? "add"}
             onValueChange={(v) =>
               onUpdateConfig({ mode: v as SetTagCfg["mode"] })
             }
           >
-            <SelectTrigger className="bg-slate-800">
+            <SelectTrigger className="bg-muted">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1853,13 +1870,13 @@ function SetTagForm({
           </Select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-slate-400">Tag</label>
+          <label className="mb-1 block text-xs text-muted-foreground">Tag</label>
           {tags.length > 0 ? (
             <Select
               value={cfg.tag_id ?? ""}
               onValueChange={(v) => onUpdateConfig({ tag_id: v })}
             >
-              <SelectTrigger className="bg-slate-800">
+              <SelectTrigger className="bg-muted">
                 <SelectValue placeholder="Pick a tag…" />
               </SelectTrigger>
               <SelectContent>
@@ -1875,7 +1892,7 @@ function SetTagForm({
               value={cfg.tag_id ?? ""}
               onChange={(e) => onUpdateConfig({ tag_id: e.target.value })}
               placeholder="Tag UUID"
-              className="bg-slate-800 font-mono text-xs"
+              className="bg-muted font-mono text-xs"
             />
           )}
         </div>
@@ -1906,19 +1923,19 @@ function TextRow({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-xs text-slate-400">{label}</label>
+      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
       {rows > 1 ? (
         <Textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           rows={rows}
-          className="bg-slate-800"
+          className="bg-muted"
         />
       ) : (
         <Input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="bg-slate-800"
+          className="bg-muted"
         />
       )}
     </div>
@@ -1940,7 +1957,7 @@ function NextNodeRow({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-xs text-slate-400">{label}</label>
+      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
       <NodeKeySelect
         value={value || null}
         nodes={allNodes}
@@ -1973,7 +1990,7 @@ function NodeKeySelect({
       value={value ?? "__none__"}
       onValueChange={(v) => onChange(v === "__none__" ? null : v)}
     >
-      <SelectTrigger className={cn("bg-slate-800", className)}>
+      <SelectTrigger className={cn("bg-muted", className)}>
         <SelectValue placeholder={placeholder ?? "—"} />
       </SelectTrigger>
       <SelectContent>
@@ -2006,6 +2023,7 @@ function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
     "send_buttons",
     "send_list",
     "send_message",
+    "send_chatbot_reply",
     "collect_input",
     "condition",
     "set_tag",
@@ -2015,13 +2033,13 @@ function AddNodeButton({ onAdd }: { onAdd: (type: NodeType) => void }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800"
+        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
         aria-label="Add node"
       >
         <Plus className="h-3.5 w-3.5" />
         Add node
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="border-slate-700 bg-slate-900">
+      <DropdownMenuContent align="end" className="border-border bg-card">
         {types.map((t) => {
           const meta = NODE_META[t];
           return (
@@ -2052,7 +2070,7 @@ function ValidationPanel({
     // sticky-positioned over scrolled-behind node cards (a translucent
     // bg-emerald-500/10 would bleed through ugly).
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-slate-950 p-3 text-sm font-medium text-emerald-300">
+      <div className="flex items-center gap-2 rounded-lg border border-emerald-600/50 bg-background p-3 text-sm font-medium text-emerald-300">
         <CircleCheck className="h-4 w-4 shrink-0" />
         No issues. Ready to activate.
       </div>
@@ -2063,11 +2081,11 @@ function ValidationPanel({
   return (
     <div
       className={cn(
-        "rounded-lg border bg-slate-950 p-3",
+        "rounded-lg border bg-background p-3",
         errors.length > 0 ? "border-red-500/40" : "border-amber-500/40",
       )}
     >
-      <div className="mb-2 flex items-center gap-2 text-xs text-slate-400">
+      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
         {errors.length > 0 ? (
           <CircleAlert className="h-4 w-4 text-red-400" />
         ) : (
@@ -2101,7 +2119,7 @@ function IssueLine({
       <CircleAlert className={cn("mt-0.5 h-3 w-3 shrink-0", iconTone)} />
       <span className="min-w-0 flex-1">
         {issue.node_key && (
-          <code className="mr-1 rounded bg-slate-800 px-1 py-0.5 text-[10px] text-slate-400">
+          <code className="mr-1 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
             {issue.node_key}
           </code>
         )}
@@ -2118,7 +2136,7 @@ function IssueLine({
         type="button"
         onClick={() => onJump(issue.node_key!)}
         className={cn(
-          "flex w-full items-start gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-slate-800/60",
+          "flex w-full items-start gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-muted/60",
           tone,
         )}
         aria-label={`Jump to node ${issue.node_key}`}
@@ -2135,6 +2153,168 @@ function IssueLine({
       )}
     >
       {body}
+    </div>
+  );
+}
+
+// ---- Chatbot Reply Flow Picker ----
+
+function ChatbotReplyFlowPicker({
+  config,
+  allNodes,
+  currentKey,
+  onUpdateConfig,
+}: {
+  config: Record<string, unknown>;
+  allNodes: BuilderNode[];
+  currentKey: string;
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+}) {
+  const [replies, setReplies] = useState<Array<{
+    id: string; name: string; reply_type: string;
+    buttons?: Array<{ id: string; text: string }>;
+    list_sections?: Array<{ rows: Array<{ id: string; title: string }> }>;
+  }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/chatbot")
+      .then((r) => r.json())
+      .then((d) => setReplies(d.replies || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const selectedId = (config.chatbot_reply_id as string) || "";
+  const selected = replies.find((r) => r.id === selectedId);
+
+  function handleSelect(id: string) {
+    const reply = replies.find((r) => r.id === id);
+    if (!reply) {
+      onUpdateConfig({ chatbot_reply_id: id, next_node_key: "", button_routes: [], row_routes: [] });
+      return;
+    }
+
+    if (reply.reply_type === "interactive_buttons" && reply.buttons?.length) {
+      onUpdateConfig({
+        chatbot_reply_id: id,
+        button_routes: reply.buttons.map((b) => ({ button_id: b.id, button_text: b.text, next_node_key: "" })),
+        row_routes: [],
+        next_node_key: undefined,
+      });
+    } else if (reply.reply_type === "interactive_list" && reply.list_sections?.length) {
+      const allRows = reply.list_sections.flatMap((s) => s.rows || []);
+      onUpdateConfig({
+        chatbot_reply_id: id,
+        row_routes: allRows.map((r) => ({ row_id: r.id, row_title: r.title, next_node_key: "" })),
+        button_routes: [],
+        next_node_key: undefined,
+      });
+    } else {
+      onUpdateConfig({
+        chatbot_reply_id: id,
+        next_node_key: "",
+        button_routes: [],
+        row_routes: [],
+      });
+    }
+  }
+
+  if (loading) return <p className="text-xs text-muted-foreground">Loading bot replies...</p>;
+
+  if (replies.length === 0) {
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">No bot replies found.</p>
+        <a href="/chatbot/new" className="text-xs text-primary hover:underline">+ Create Bot Reply</a>
+      </div>
+    );
+  }
+
+  const otherNodes = allNodes.filter((n) => n.node_key !== currentKey);
+  const buttonRoutes = (config.button_routes as Array<{ button_id: string; button_text: string; next_node_key: string }>) || [];
+  const rowRoutes = (config.row_routes as Array<{ row_id: string; row_title: string; next_node_key: string }>) || [];
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">Select Bot Reply</label>
+        <select
+          value={selectedId}
+          onChange={(e) => handleSelect(e.target.value)}
+          className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground"
+        >
+          <option value="">— Select —</option>
+          {replies.map((r) => (
+            <option key={r.id} value={r.id}>{r.name} ({r.reply_type.replace(/_/g, " ")})</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Linear next (for text/cta) */}
+      {selected && (selected.reply_type === "text" || selected.reply_type === "cta_url") && (
+        <NextNodeRow
+          label="Next node after reply"
+          value={(config.next_node_key as string) || ""}
+          allNodes={allNodes}
+          currentKey={currentKey}
+          onChange={(v) => onUpdateConfig({ next_node_key: v })}
+        />
+      )}
+
+      {/* Button routes */}
+      {buttonRoutes.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Button → Next Node</p>
+          {buttonRoutes.map((br, i) => (
+            <div key={br.button_id} className="flex items-center gap-2">
+              <span className="text-xs text-foreground min-w-[80px] truncate">{br.button_text || br.button_id}</span>
+              <span className="text-xs text-muted-foreground">→</span>
+              <select
+                value={br.next_node_key}
+                onChange={(e) => {
+                  const updated = [...buttonRoutes];
+                  updated[i] = { ...br, next_node_key: e.target.value };
+                  onUpdateConfig({ button_routes: updated });
+                }}
+                className="flex-1 rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground"
+              >
+                <option value="">— None —</option>
+                {otherNodes.map((n) => (
+                  <option key={n.node_key} value={n.node_key}>{NODE_META[n.node_type].label}: {n.node_key}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Row routes */}
+      {rowRoutes.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">List Row → Next Node</p>
+          {rowRoutes.map((rr, i) => (
+            <div key={rr.row_id} className="flex items-center gap-2">
+              <span className="text-xs text-foreground min-w-[80px] truncate">{rr.row_title || rr.row_id}</span>
+              <span className="text-xs text-muted-foreground">→</span>
+              <select
+                value={rr.next_node_key}
+                onChange={(e) => {
+                  const updated = [...rowRoutes];
+                  updated[i] = { ...rr, next_node_key: e.target.value };
+                  onUpdateConfig({ row_routes: updated });
+                }}
+                className="flex-1 rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground"
+              >
+                <option value="">— None —</option>
+                {otherNodes.map((n) => (
+                  <option key={n.node_key} value={n.node_key}>{NODE_META[n.node_type].label}: {n.node_key}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

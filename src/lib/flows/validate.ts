@@ -648,6 +648,20 @@ function validateNode(
       // beyond their existence.
       break;
 
+    case "send_chatbot_reply": {
+      const cfg = node.config as Record<string, unknown>;
+      if (!cfg.chatbot_reply_id) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "chatbot_reply_id",
+          message: "Bot reply node needs a chatbot reply selected.",
+        });
+      }
+      break;
+    }
+
     default:
       issues.push({
         severity: "error",

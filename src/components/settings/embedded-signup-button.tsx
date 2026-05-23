@@ -145,7 +145,7 @@ export function EmbeddedSignupButton({ onSuccess }: EmbeddedSignupButtonProps) {
     <Button
       onClick={launchWhatsAppSignup}
       disabled={loading}
-      className="gap-2 bg-[#1877F2] hover:bg-[#166FE5] text-white font-semibold h-11 px-6"
+      className="gap-2 bg-[#1877F2] hover:bg-[#166FE5] text-foreground font-semibold h-11 px-6"
     >
       {loading ? (
         <>

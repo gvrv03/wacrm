@@ -135,6 +135,11 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
     case 'close_conversation':
       // No config required.
       break
+    case 'send_chatbot_reply':
+      if (!nonEmpty(c.chatbot_reply_id)) {
+        issues.push({ path: `${path}.chatbot_reply_id`, message: 'bot reply selection is required' })
+      }
+      break
     default:
       issues.push({ path, message: `unknown step type: ${step.step_type}` })
   }

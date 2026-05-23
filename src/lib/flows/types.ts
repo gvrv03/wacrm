@@ -144,6 +144,25 @@ export interface SetTagNodeConfig {
   next_node_key: string;
 }
 
+/**
+ * Sends a pre-configured chatbot reply (interactive message) and
+ * optionally branches based on the customer's button/list selection.
+ *
+ * For text/CTA replies: single `next_node_key` (linear advance).
+ * For button replies: `button_routes` maps each button id → next node.
+ * For list replies: `row_routes` maps each row id → next node.
+ */
+export interface SendChatbotReplyNodeConfig {
+  /** UUID of the chatbot_replies row to send. */
+  chatbot_reply_id: string;
+  /** For text/cta_url replies — single next node. */
+  next_node_key?: string;
+  /** For interactive_buttons — maps button.id → next node_key. */
+  button_routes?: Array<{ button_id: string; button_text: string; next_node_key: string }>;
+  /** For interactive_list — maps row.id → next node_key. */
+  row_routes?: Array<{ row_id: string; row_title: string; next_node_key: string }>;
+}
+
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
@@ -160,6 +179,7 @@ export type FlowNodeConfig =
   | { node_type: "send_message"; config: SendMessageNodeConfig }
   | { node_type: "send_buttons"; config: SendButtonsNodeConfig }
   | { node_type: "send_list"; config: SendListNodeConfig }
+  | { node_type: "send_chatbot_reply"; config: SendChatbotReplyNodeConfig }
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }

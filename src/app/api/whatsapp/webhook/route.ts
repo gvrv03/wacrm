@@ -6,6 +6,7 @@ import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { matchChatbotReply, type ChatbotMatchResult } from '@/lib/chatbot/engine'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -226,7 +227,8 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           message,
           contact,
           config.user_id,
-          decryptedAccessToken
+          decryptedAccessToken,
+          phoneNumberId
         )
       }
     }
@@ -450,7 +452,8 @@ async function processMessage(
   message: WhatsAppMessage,
   contact: { profile: { name: string }; wa_id: string },
   userId: string,
-  accessToken: string
+  accessToken: string,
+  phoneNumberId?: string
 ) {
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
@@ -627,6 +630,84 @@ async function processMessage(
     | 'new_message_received'
     | 'keyword_match'
   )[] = []
+
+  // ============================================================
+  // Chatbot auto-reply dispatch.
+  //
+  // Fires BEFORE automations. If a chatbot rule matches, it sends
+  // the interactive reply immediately. Suppressed when a Flow
+  // consumed the message (customer is navigating a flow menu).
+  // ============================================================
+  let chatbotFired = false
+  if (!flowConsumed) {
+    try {
+      const chatbotResult: ChatbotMatchResult = await matchChatbotReply(
+        userId,
+        inboundText,
+        isFirstInboundMessage
+      )
+      if (chatbotResult.matched && chatbotResult.payload) {
+        chatbotFired = true
+        // Send the chatbot reply via Meta API
+        const chatPayload: Record<string, unknown> = {
+          ...chatbotResult.payload,
+          to: contactRecord.phone.replace(/^\+/, ''),
+        }
+        // Substitute contact variables in reply text
+        const contact = contactRecord as { name?: string; phone: string; email?: string; company?: string }
+        const substituteVars = (text: string) =>
+          text
+            .replace(/\{name\}/g, contact.name || '')
+            .replace(/\{phone\}/g, contact.phone || '')
+            .replace(/\{email\}/g, contact.email || '')
+            .replace(/\{company\}/g, contact.company || '')
+
+        // Apply variable substitution to body text in the payload
+        if (chatPayload.type === 'text' && chatPayload.text) {
+          (chatPayload.text as { body: string }).body = substituteVars(
+            (chatPayload.text as { body: string }).body
+          )
+        } else if (chatPayload.type === 'interactive' && chatPayload.interactive) {
+          const interactive = chatPayload.interactive as { body?: { text: string } }
+          if (interactive.body?.text) {
+            interactive.body.text = substituteVars(interactive.body.text)
+          }
+        }
+
+        // Send via Meta Cloud API
+        const chatPhoneNumberId = phoneNumberId || ''
+        const metaUrl = `https://graph.facebook.com/v21.0/${chatPhoneNumberId}/messages`
+        const sendRes = await fetch(metaUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(chatPayload),
+        })
+        if (!sendRes.ok) {
+          const errBody = await sendRes.json().catch(() => ({}))
+          console.error('[chatbot] Meta send failed:', sendRes.status, errBody)
+        } else {
+          // Store the bot reply as a message in the conversation
+          const sendData = await sendRes.json()
+          const botMsgId = sendData?.messages?.[0]?.id
+          await supabaseAdmin().from('messages').insert({
+            conversation_id: conversation.id,
+            sender_type: 'bot',
+            content_type: chatPayload.type === 'text' ? 'text' : 'interactive',
+            content_text: chatbotResult.reply?.reply_text || '',
+            message_id: botMsgId,
+            status: 'sent',
+            created_at: new Date().toISOString(),
+          })
+        }
+      }
+    } catch (err) {
+      console.error('[chatbot] dispatch error:', err)
+    }
+  }
+
   // Content-level triggers are suppressed when a flow consumed the
   // message — see the comment block above.
   if (!flowConsumed) {

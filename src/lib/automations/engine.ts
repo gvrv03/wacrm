@@ -443,6 +443,63 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       return 'conversation closed'
     }
 
+    case 'send_chatbot_reply': {
+      const cfg = step.step_config as { chatbot_reply_id: string }
+      if (!cfg.chatbot_reply_id) throw new Error('send_chatbot_reply needs chatbot_reply_id')
+      if (!args.contactId) throw new Error('send_chatbot_reply needs a contact')
+
+      // Fetch the chatbot reply config
+      const { data: botReply, error: brErr } = await db
+        .from('chatbot_replies')
+        .select('*')
+        .eq('id', cfg.chatbot_reply_id)
+        .eq('user_id', args.automation.user_id)
+        .maybeSingle()
+
+      if (brErr || !botReply) throw new Error('Bot reply not found or access denied')
+
+      // Use the chatbot engine to build the payload
+      const { buildWhatsAppPayload } = await import('@/lib/chatbot/engine')
+      const payload = buildWhatsAppPayload(botReply)
+
+      // Get contact phone and send
+      const { data: contactRow } = await db
+        .from('contacts')
+        .select('phone, name, email, company')
+        .eq('id', args.contactId)
+        .maybeSingle()
+
+      if (!contactRow?.phone) throw new Error('Contact has no phone number')
+
+      // Variable substitution
+      let bodyText = (payload as { text?: { body: string }; interactive?: { body?: { text: string } } }).text?.body
+        || (payload as { interactive?: { body?: { text: string } } }).interactive?.body?.text || ''
+      bodyText = bodyText
+        .replace(/\{name\}/g, contactRow.name || '')
+        .replace(/\{phone\}/g, contactRow.phone || '')
+        .replace(/\{email\}/g, contactRow.email || '')
+        .replace(/\{company\}/g, contactRow.company || '')
+
+      // Update body in payload
+      if ((payload as Record<string, unknown>).type === 'text') {
+        ((payload as Record<string, unknown>).text as { body: string }).body = bodyText
+      } else if ((payload as Record<string, unknown>).interactive) {
+        const interactive = (payload as Record<string, unknown>).interactive as { body?: { text: string } }
+        if (interactive.body) interactive.body.text = bodyText
+      }
+
+      // Send via the existing send infrastructure
+      const conversationId = await resolveConversationId(args)
+      const { whatsapp_message_id } = await engineSendText({
+        userId: args.automation.user_id,
+        conversationId,
+        contactId: args.contactId,
+        text: bodyText, // Fallback: send as text if interactive fails
+      })
+
+      return `bot reply sent (${botReply.name}) via ${whatsapp_message_id}`
+    }
+
     default:
       return `unknown step: ${step.step_type}`
   }

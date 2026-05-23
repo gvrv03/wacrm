@@ -81,12 +81,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
 
       if (error) {
-        console.error("[AuthProvider] fetchProfile error:", {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        });
+        // Suppress noisy console errors for non-critical profile fetch failures
+        // (e.g. RLS issues during navigation between route groups)
+        if (error.message || error.code) {
+          console.error("[AuthProvider] fetchProfile error:", {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          });
+        }
         return;
       }
 

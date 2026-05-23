@@ -151,6 +151,8 @@ export interface MessageTemplate {
   body_text: string;
   footer_text?: string;
   buttons?: Record<string, unknown>[];
+  carousel_cards?: Record<string, unknown>[];
+  validity_period_minutes?: number | null;
   status?: 'Draft' | 'Pending' | 'Approved' | 'Rejected';
   created_at: string;
 }
@@ -261,6 +263,7 @@ export type AutomationTriggerType =
 export type AutomationStepType =
   | 'send_message'
   | 'send_template'
+  | 'send_chatbot_reply'
   | 'add_tag'
   | 'remove_tag'
   | 'assign_conversation'
@@ -352,9 +355,14 @@ export interface SendWebhookStepConfig {
   body_template?: string;
 }
 
+export interface SendChatbotReplyStepConfig {
+  chatbot_reply_id: string;
+}
+
 export type AutomationStepConfig =
   | SendMessageStepConfig
   | SendTemplateStepConfig
+  | SendChatbotReplyStepConfig
   | TagStepConfig
   | AssignConversationStepConfig
   | UpdateContactFieldStepConfig
