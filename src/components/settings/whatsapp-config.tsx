@@ -27,12 +27,15 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
+import { FacebookSDK } from '@/components/facebook-sdk';
+import { EmbeddedSignupButton } from '@/components/settings/embedded-signup-button';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
 
 const MASKED_TOKEN = '••••••••••••••••';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
+type SetupMethod = 'embedded' | 'manual';
 
 export function WhatsAppConfig() {
   const supabase = createClient();
@@ -47,7 +50,7 @@ export function WhatsAppConfig() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
-
+  const [setupMethod, setSetupMethod] = useState<SetupMethod>('embedded');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
   const [accessToken, setAccessToken] = useState('');
@@ -262,6 +265,11 @@ export function WhatsAppConfig() {
     toast.success('Webhook URL copied to clipboard');
   }
 
+  // Callback for the Embedded Signup button — refetch config after success
+  const handleEmbeddedSignupSuccess = useCallback(() => {
+    if (user) fetchConfig(user.id);
+  }, [user, fetchConfig]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -274,7 +282,10 @@ export function WhatsAppConfig() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_380px] mt-4">
-      {/* Main config form */}
+      {/* Facebook SDK — loaded once, needed for Embedded Signup */}
+      <FacebookSDK />
+
+      {/* Main config area */}
       <div className="space-y-6">
         {/* Corrupted-token reset banner */}
         {showResetBanner && (
@@ -331,169 +342,245 @@ export function WhatsAppConfig() {
           </AlertDescription>
         </Alert>
 
-        {/* API Credentials */}
-        <Card className="bg-slate-900 border-slate-700 ring-0 ring-transparent">
-          <CardHeader>
-            <CardTitle className="text-white">API Credentials</CardTitle>
-            <CardDescription className="text-slate-400">
-              Enter your Meta WhatsApp Business API credentials.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-slate-300">Phone Number ID</Label>
-              <Input
-                placeholder="e.g. 100234567890123"
-                value={phoneNumberId}
-                onChange={(e) => setPhoneNumberId(e.target.value)}
-                className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-slate-300">WhatsApp Business Account ID</Label>
-              <Input
-                placeholder="e.g. 100234567890456"
-                value={wabaId}
-                onChange={(e) => setWabaId(e.target.value)}
-                className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-slate-300">Permanent Access Token</Label>
-              <div className="relative">
-                <Input
-                  type={showToken ? 'text' : 'password'}
-                  placeholder="Enter your access token"
-                  value={accessToken}
-                  onChange={(e) => {
-                    setAccessToken(e.target.value);
-                    setTokenEdited(true);
-                  }}
-                  onFocus={() => {
-                    if (accessToken === MASKED_TOKEN) {
-                      setAccessToken('');
-                      setTokenEdited(true);
-                    }
-                  }}
-                  className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 pr-10"
-                />
+        {/* Setup Method Selector — only show when not already connected */}
+        {connectionStatus !== 'connected' && !config && (
+          <Card className="bg-slate-900 border-slate-700 ring-0 ring-transparent">
+            <CardHeader>
+              <CardTitle className="text-white">Connect WhatsApp Business</CardTitle>
+              <CardDescription className="text-slate-400">
+                Choose how you want to connect your WhatsApp Business Account.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-2 mb-6">
                 <button
                   type="button"
-                  onClick={() => setShowToken(!showToken)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
+                  onClick={() => setSetupMethod('embedded')}
+                  className={`flex-1 rounded-lg border px-4 py-3 text-left transition-colors ${
+                    setupMethod === 'embedded'
+                      ? 'border-primary bg-primary/10 text-white'
+                      : 'border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-600 hover:text-slate-300'
+                  }`}
                 >
-                  {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  <div className="font-medium text-sm">
+                    Embedded Signup
+                  </div>
+                  <div className="text-xs mt-0.5 opacity-80">
+                    Quick setup via Facebook — recommended
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSetupMethod('manual')}
+                  className={`flex-1 rounded-lg border px-4 py-3 text-left transition-colors ${
+                    setupMethod === 'manual'
+                      ? 'border-primary bg-primary/10 text-white'
+                      : 'border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-600 hover:text-slate-300'
+                  }`}
+                >
+                  <div className="font-medium text-sm">
+                    Manual Setup
+                  </div>
+                  <div className="text-xs mt-0.5 opacity-80">
+                    Enter API credentials manually
+                  </div>
                 </button>
               </div>
-              {config && !tokenEdited && (
-                <p className="text-xs text-slate-500">
-                  Token is hidden for security. Re-enter it to update configuration.
-                </p>
+
+              {/* Embedded Signup Section */}
+              {setupMethod === 'embedded' && (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+                    <h4 className="text-sm font-medium text-white mb-2">
+                      How it works
+                    </h4>
+                    <ol className="list-decimal list-inside space-y-1.5 text-sm text-slate-400">
+                      <li>Click the button below to open the Facebook signup flow</li>
+                      <li>Log in with your Facebook account and select your business</li>
+                      <li>Choose or create a WhatsApp Business Account</li>
+                      <li>Verify your phone number</li>
+                      <li>Your account will be connected automatically</li>
+                    </ol>
+                  </div>
+                  <EmbeddedSignupButton onSuccess={handleEmbeddedSignupSuccess} />
+                  <p className="text-xs text-slate-500">
+                    By clicking &quot;Login with Facebook&quot;, you&apos;ll be redirected to
+                    Meta to authorize access to your WhatsApp Business Account.
+                  </p>
+                </div>
               )}
-            </div>
+            </CardContent>
+          </Card>
+        )}
 
-            <div className="space-y-2">
-              <Label className="text-slate-300">Webhook Verify Token</Label>
-              <Input
-                placeholder="Create a custom verify token"
-                value={verifyToken}
-                onChange={(e) => setVerifyToken(e.target.value)}
-                className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
-              />
-              <p className="text-xs text-slate-500">
-                A custom string you create. Must match the token you set in Meta webhook settings.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Manual API Credentials — show when method is manual OR when config already exists */}
+        {(setupMethod === 'manual' || config) && (
+          <>
+            {/* API Credentials */}
+            <Card className="bg-slate-900 border-slate-700 ring-0 ring-transparent">
+              <CardHeader>
+                <CardTitle className="text-white">API Credentials</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Enter your Meta WhatsApp Business API credentials.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-slate-300">Phone Number ID</Label>
+                  <Input
+                    placeholder="e.g. 100234567890123"
+                    value={phoneNumberId}
+                    onChange={(e) => setPhoneNumberId(e.target.value)}
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                  />
+                </div>
 
-        {/* Webhook URL */}
-        <Card className="bg-slate-900 border-slate-700 ring-0 ring-transparent">
-          <CardHeader>
-            <CardTitle className="text-white">Webhook Configuration</CardTitle>
-            <CardDescription className="text-slate-400">
-              Use this URL as your webhook callback in the Meta App Dashboard.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <Label className="text-slate-300">Webhook Callback URL</Label>
-              <div className="flex gap-2">
-                <Input
-                  readOnly
-                  value={webhookUrl}
-                  className="bg-slate-800 border-slate-700 text-slate-300 font-mono text-sm"
-                />
+                <div className="space-y-2">
+                  <Label className="text-slate-300">WhatsApp Business Account ID</Label>
+                  <Input
+                    placeholder="e.g. 100234567890456"
+                    value={wabaId}
+                    onChange={(e) => setWabaId(e.target.value)}
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-slate-300">Permanent Access Token</Label>
+                  <div className="relative">
+                    <Input
+                      type={showToken ? 'text' : 'password'}
+                      placeholder="Enter your access token"
+                      value={accessToken}
+                      onChange={(e) => {
+                        setAccessToken(e.target.value);
+                        setTokenEdited(true);
+                      }}
+                      onFocus={() => {
+                        if (accessToken === MASKED_TOKEN) {
+                          setAccessToken('');
+                          setTokenEdited(true);
+                        }
+                      }}
+                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowToken(!showToken)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
+                    >
+                      {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {config && !tokenEdited && (
+                    <p className="text-xs text-slate-500">
+                      Token is hidden for security. Re-enter it to update configuration.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-slate-300">Webhook Verify Token</Label>
+                  <Input
+                    placeholder="Create a custom verify token"
+                    value={verifyToken}
+                    onChange={(e) => setVerifyToken(e.target.value)}
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                  />
+                  <p className="text-xs text-slate-500">
+                    A custom string you create. Must match the token you set in Meta webhook settings.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Webhook URL */}
+            <Card className="bg-slate-900 border-slate-700 ring-0 ring-transparent">
+              <CardHeader>
+                <CardTitle className="text-white">Webhook Configuration</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Use this URL as your webhook callback in the Meta App Dashboard.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <Label className="text-slate-300">Webhook Callback URL</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={webhookUrl}
+                      className="bg-slate-800 border-slate-700 text-slate-300 font-mono text-sm"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={handleCopyWebhookUrl}
+                      className="shrink-0 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800"
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-3">
+              <Button
+                onClick={handleSave}
+                disabled={saving}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Configuration'
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleTestConnection}
+                disabled={testing || !config}
+                className="border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800"
+              >
+                {testing ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Testing...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="size-4" />
+                    Test API Connection
+                  </>
+                )}
+              </Button>
+              {config && (
                 <Button
                   variant="outline"
-                  size="icon"
-                  onClick={handleCopyWebhookUrl}
-                  className="shrink-0 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800"
+                  onClick={handleReset}
+                  disabled={resetting}
+                  className="border-red-900 text-red-400 hover:text-red-300 hover:bg-red-950/40"
                 >
-                  <Copy className="size-4" />
+                  {resetting ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Resetting...
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="size-4" />
+                      Reset Configuration
+                    </>
+                  )}
                 </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Action Buttons */}
-        <div className="flex flex-wrap gap-3">
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              'Save Configuration'
-            )}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={handleTestConnection}
-            disabled={testing || !config}
-            className="border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800"
-          >
-            {testing ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Testing...
-              </>
-            ) : (
-              <>
-                <Zap className="size-4" />
-                Test API Connection
-              </>
-            )}
-          </Button>
-          {config && (
-            <Button
-              variant="outline"
-              onClick={handleReset}
-              disabled={resetting}
-              className="border-red-900 text-red-400 hover:text-red-300 hover:bg-red-950/40"
-            >
-              {resetting ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Resetting...
-                </>
-              ) : (
-                <>
-                  <RotateCcw className="size-4" />
-                  Reset Configuration
-                </>
               )}
-            </Button>
-          )}
-        </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Setup Instructions Sidebar */}
