@@ -7,6 +7,7 @@ import {
   MessageSquare, List, ExternalLink, Sparkles,
   Image as ImageIcon, Video, FileText,
   Bold, Italic, Strikethrough, Code,
+  Layers,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/lib/supabase/client';
@@ -24,7 +25,7 @@ import {
 // Types & Constants
 // ============================================================
 
-type ReplyType = 'text' | 'interactive_buttons' | 'interactive_list' | 'cta_url';
+type ReplyType = 'text' | 'interactive_buttons' | 'interactive_list' | 'cta_url' | 'carousel';
 type TriggerType = 'welcome' | 'is' | 'starts_with' | 'ends_with' | 'contains_whole_word' | 'contains';
 
 interface FormState {
@@ -39,10 +40,19 @@ interface FormState {
   list_button_text: string;
   cta_button_text: string;
   cta_button_url: string;
+  carousel_cards: Array<CarouselCardForm>;
   trigger_type: TriggerType;
   trigger_value: string;
   case_sensitive: boolean;
   is_active: boolean;
+}
+
+interface CarouselCardForm {
+  id: string;
+  header_type: 'image' | 'video';
+  header_url: string;
+  body_text: string;
+  buttons: Array<{ id: string; type: 'cta_url' | 'quick_reply'; display_text: string; url: string; title: string }>;
 }
 
 const VARIABLES = [
@@ -66,6 +76,7 @@ const REPLY_TYPES: { value: ReplyType; label: string; icon: typeof MessageSquare
   { value: 'interactive_buttons', label: 'Reply Buttons', icon: Sparkles },
   { value: 'cta_url', label: 'CTA URL Button', icon: ExternalLink },
   { value: 'interactive_list', label: 'List Message', icon: List },
+  { value: 'carousel', label: 'Media Carousel', icon: Layers },
 ];
 
 const EMPTY: FormState = {
@@ -74,6 +85,7 @@ const EMPTY: FormState = {
   buttons: [{ text: '', id: 'btn_1' }],
   list_sections: [{ title: '', rows: [{ id: 'row_1', title: '' }] }],
   list_button_text: 'View Options', cta_button_text: '', cta_button_url: '',
+  carousel_cards: [],
   trigger_type: 'contains', trigger_value: '', case_sensitive: false, is_active: true,
 };
 
@@ -108,6 +120,7 @@ export default function NewChatbotReplyPage() {
         list_sections: reply.list_sections || [{ title: '', rows: [{ id: 'row_1', title: '' }] }],
         list_button_text: reply.list_button_text || 'View Options',
         cta_button_text: reply.cta_button_text || '', cta_button_url: reply.cta_button_url || '',
+        carousel_cards: reply.carousel_cards || [],
         trigger_type: reply.trigger_type, trigger_value: reply.trigger_value || '',
         case_sensitive: reply.case_sensitive, is_active: reply.is_active,
       });
@@ -148,6 +161,15 @@ export default function NewChatbotReplyPage() {
       if (!form.cta_button_url.trim()) e.cta_url = 'URL required';
       if (form.cta_button_text.length > 20) e.cta_text = 'Max 20 chars';
     }
+    if (form.reply_type === 'carousel') {
+      if (form.carousel_cards.length < 2) e.carousel = 'Minimum 2 cards required';
+      if (form.carousel_cards.length > 10) e.carousel = 'Maximum 10 cards';
+      for (const card of form.carousel_cards) {
+        if (!card.header_url.trim()) e[`card_${card.id}`] = 'Media URL required';
+        if (card.buttons.length === 0) e[`card_${card.id}_btn`] = 'At least 1 button per card';
+        if (card.buttons.length > 2) e[`card_${card.id}_btn`] = 'Max 2 buttons per card';
+      }
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -186,6 +208,7 @@ export default function NewChatbotReplyPage() {
         header_content: form.header_type !== 'none' ? form.header_content : null,
         cta_button_text: form.reply_type === 'cta_url' ? form.cta_button_text : null,
         cta_button_url: form.reply_type === 'cta_url' ? form.cta_button_url : null,
+        carousel_cards: form.reply_type === 'carousel' ? form.carousel_cards : null,
       };
       const res = editId
         ? await fetch(`/api/chatbot/${editId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -374,6 +397,69 @@ export default function NewChatbotReplyPage() {
             </Section>
           )}
 
+          {/* Carousel */}
+          {form.reply_type === 'carousel' && (
+            <Section title="Carousel Cards" hint="2-10 cards. Each card needs a header image/video and at least 1 button.">
+              {form.carousel_cards.map((card, cIdx) => (
+                <div key={card.id} className="rounded-lg border border-border p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-foreground">Card {cIdx + 1}</span>
+                    {form.carousel_cards.length > 2 && (
+                      <button type="button" onClick={() => setForm({ ...form, carousel_cards: form.carousel_cards.filter((_, i) => i !== cIdx) })} className="text-muted-foreground hover:text-destructive"><X className="size-3.5" /></button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-[100px_1fr] gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Media</Label>
+                      <select value={card.header_type} onChange={(e) => { const u = [...form.carousel_cards]; u[cIdx] = { ...card, header_type: e.target.value as 'image' | 'video' }; setForm({ ...form, carousel_cards: u }); }} className="w-full rounded border border-border bg-background px-1.5 py-1 text-xs">
+                        <option value="image">Image</option>
+                        <option value="video">Video</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Media URL</Label>
+                      <Input value={card.header_url} onChange={(e) => { const u = [...form.carousel_cards]; u[cIdx] = { ...card, header_url: e.target.value }; setForm({ ...form, carousel_cards: u }); }} placeholder="https://..." className="text-xs" />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Card Body (optional, max 160)</Label>
+                    <Input value={card.body_text} onChange={(e) => { const u = [...form.carousel_cards]; u[cIdx] = { ...card, body_text: e.target.value }; setForm({ ...form, carousel_cards: u }); }} placeholder="Product description" maxLength={160} className="text-xs" />
+                  </div>
+                  {/* Card buttons */}
+                  <div className="space-y-1.5">
+                    <Label className="text-[10px] text-muted-foreground">Buttons (max 2)</Label>
+                    {card.buttons.map((btn, bIdx) => (
+                      <div key={btn.id} className="flex items-center gap-1.5">
+                        <select value={btn.type} onChange={(e) => { const u = [...form.carousel_cards]; const btns = [...u[cIdx].buttons]; btns[bIdx] = { ...btn, type: e.target.value as 'cta_url' | 'quick_reply' }; u[cIdx] = { ...card, buttons: btns }; setForm({ ...form, carousel_cards: u }); }} className="rounded border border-border bg-background px-1 py-1 text-[10px] w-[80px]">
+                          <option value="cta_url">URL</option>
+                          <option value="quick_reply">Reply</option>
+                        </select>
+                        {btn.type === 'cta_url' && (
+                          <>
+                            <Input value={btn.display_text} onChange={(e) => { const u = [...form.carousel_cards]; const btns = [...u[cIdx].buttons]; btns[bIdx] = { ...btn, display_text: e.target.value }; u[cIdx] = { ...card, buttons: btns }; setForm({ ...form, carousel_cards: u }); }} placeholder="Label" className="text-xs flex-1" maxLength={20} />
+                            <Input value={btn.url} onChange={(e) => { const u = [...form.carousel_cards]; const btns = [...u[cIdx].buttons]; btns[bIdx] = { ...btn, url: e.target.value }; u[cIdx] = { ...card, buttons: btns }; setForm({ ...form, carousel_cards: u }); }} placeholder="URL" className="text-xs flex-1" />
+                          </>
+                        )}
+                        {btn.type === 'quick_reply' && (
+                          <Input value={btn.title} onChange={(e) => { const u = [...form.carousel_cards]; const btns = [...u[cIdx].buttons]; btns[bIdx] = { ...btn, title: e.target.value }; u[cIdx] = { ...card, buttons: btns }; setForm({ ...form, carousel_cards: u }); }} placeholder="Button text" className="text-xs flex-1" maxLength={20} />
+                        )}
+                        <button type="button" onClick={() => { const u = [...form.carousel_cards]; u[cIdx] = { ...card, buttons: card.buttons.filter((_, i) => i !== bIdx) }; setForm({ ...form, carousel_cards: u }); }} className="text-muted-foreground hover:text-destructive"><X className="size-3" /></button>
+                      </div>
+                    ))}
+                    {card.buttons.length < 2 && (
+                      <Button variant="outline" size="sm" className="text-[10px] h-6" onClick={() => { const u = [...form.carousel_cards]; u[cIdx] = { ...card, buttons: [...card.buttons, { id: `cbtn_${uid()}`, type: 'quick_reply', display_text: '', url: '', title: '' }] }; setForm({ ...form, carousel_cards: u }); }}><Plus className="size-2.5 mr-0.5" /> Button</Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {form.carousel_cards.length < 10 && (
+                <Button variant="outline" size="sm" onClick={() => setForm({ ...form, carousel_cards: [...form.carousel_cards, { id: uid(), header_type: 'image', header_url: '', body_text: '', buttons: [{ id: `cbtn_${uid()}`, type: 'quick_reply', display_text: '', url: '', title: '' }] }] })}>
+                  <Plus className="size-3 mr-1" /> Add Card ({form.carousel_cards.length}/10)
+                </Button>
+              )}
+            </Section>
+          )}
+
           {/* Footer */}
           <Section title="Footer Text" optional>
             <Input value={form.footer_text} onChange={(e) => setForm({ ...form, footer_text: e.target.value })} placeholder="Optional footer (max 60 chars)" maxLength={60} />
@@ -464,6 +550,37 @@ export default function NewChatbotReplyPage() {
                 {form.reply_type === 'interactive_list' && (
                   <div className="flex w-full items-center justify-center gap-1 rounded-md bg-white py-1.5 text-[11px] font-medium text-[#00a884] shadow-sm">
                     <List className="size-3" />{form.list_button_text || 'View Options'}
+                  </div>
+                )}
+
+                {/* Carousel preview */}
+                {form.reply_type === 'carousel' && form.carousel_cards.length > 0 && (
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+                    {form.carousel_cards.map((card, idx) => (
+                      <div key={card.id} className="min-w-[140px] max-w-[140px] rounded-lg bg-white shadow-sm overflow-hidden shrink-0">
+                        <div className="h-[70px] bg-gray-100 flex items-center justify-center overflow-hidden">
+                          {card.header_url ? (
+                            <img src={card.header_url} alt={`Card ${idx + 1}`} className="w-full h-full object-cover" />
+                          ) : (
+                            <ImageIcon className="size-5 text-gray-300" />
+                          )}
+                        </div>
+                        {card.body_text && (
+                          <div className="px-1.5 py-1">
+                            <p className="text-[9px] text-gray-800 line-clamp-2 leading-tight">{card.body_text}</p>
+                          </div>
+                        )}
+                        {card.buttons.length > 0 && (
+                          <div className="border-t border-gray-100">
+                            {card.buttons.map((btn) => (
+                              <div key={btn.id} className="flex items-center justify-center py-1 text-[9px] font-medium text-[#00a884] border-b border-gray-50 last:border-b-0">
+                                {btn.type === 'cta_url' ? (btn.display_text || 'Visit') : (btn.title || 'Reply')}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

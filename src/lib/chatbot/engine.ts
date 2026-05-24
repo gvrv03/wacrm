@@ -11,7 +11,7 @@ export interface ChatbotReply {
   id: string;
   user_id: string;
   name: string;
-  reply_type: 'text' | 'interactive_buttons' | 'interactive_list' | 'cta_url';
+  reply_type: 'text' | 'interactive_buttons' | 'interactive_list' | 'cta_url' | 'carousel';
   reply_text: string;
   header_type: string | null;
   header_content: string | null;
@@ -21,11 +21,29 @@ export interface ChatbotReply {
   list_button_text: string | null;
   cta_button_text: string | null;
   cta_button_url: string | null;
+  carousel_cards: Array<CarouselCard> | null;
   trigger_type: 'welcome' | 'is' | 'starts_with' | 'ends_with' | 'contains_whole_word' | 'contains';
   trigger_value: string | null;
   case_sensitive: boolean;
   is_active: boolean;
   priority: number;
+}
+
+export interface CarouselCard {
+  header_type: 'image' | 'video';
+  header_url: string;
+  body_text?: string;
+  buttons: Array<CarouselCardButton>;
+}
+
+export interface CarouselCardButton {
+  type: 'cta_url' | 'quick_reply';
+  // For cta_url
+  display_text?: string;
+  url?: string;
+  // For quick_reply
+  id?: string;
+  title?: string;
 }
 
 export interface ChatbotMatchResult {
@@ -206,6 +224,51 @@ export function buildWhatsAppPayload(reply: ChatbotReply): Record<string, unknow
               display_text: reply.cta_button_text || 'Visit',
               url: reply.cta_button_url || '',
             },
+          },
+        },
+      };
+
+    case 'carousel':
+      return {
+        ...base,
+        type: 'interactive',
+        interactive: {
+          type: 'carousel',
+          body: { text: reply.reply_text },
+          action: {
+            cards: (reply.carousel_cards || []).map((card, idx) => {
+              const cardObj: Record<string, unknown> = {
+                card_index: idx,
+                header: {
+                  type: card.header_type,
+                  [card.header_type]: { link: card.header_url },
+                },
+              };
+              if (card.body_text) {
+                cardObj.body = { text: card.body_text };
+              }
+              // Build card action based on button types
+              const ctaBtn = card.buttons.find((b) => b.type === 'cta_url');
+              const quickBtns = card.buttons.filter((b) => b.type === 'quick_reply');
+              if (ctaBtn) {
+                cardObj.type = 'cta_url';
+                cardObj.action = {
+                  name: 'cta_url',
+                  parameters: {
+                    display_text: ctaBtn.display_text || 'Visit',
+                    url: ctaBtn.url || '',
+                  },
+                };
+              }
+              if (quickBtns.length > 0) {
+                if (!cardObj.action) cardObj.action = {};
+                (cardObj.action as Record<string, unknown>).buttons = quickBtns.map((b) => ({
+                  type: 'quick_reply',
+                  quick_reply: { id: b.id || '', title: b.title || '' },
+                }));
+              }
+              return cardObj;
+            }),
           },
         },
       };

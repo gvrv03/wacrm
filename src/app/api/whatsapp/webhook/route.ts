@@ -6,6 +6,7 @@ import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { matchChatbotReply, type ChatbotMatchResult } from '@/lib/chatbot/engine'
+import { sendTypingIndicator } from '@/lib/whatsapp/typing-indicator'
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -596,6 +597,13 @@ async function processMessage(
   // no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
   // ============================================================
+  // Show typing indicator before flow processing (if there's an active run)
+  await sendTypingIndicator({
+    phoneNumberId: phoneNumberId || '',
+    accessToken,
+    messageId: message.id,
+  })
+
   const flowResult = await dispatchInboundToFlows({
     userId,
     contactId: contactRecord.id,
@@ -636,6 +644,14 @@ async function processMessage(
       )
       if (chatbotResult.matched && chatbotResult.payload) {
         chatbotFired = true
+
+        // Show typing indicator before sending the reply
+        await sendTypingIndicator({
+          phoneNumberId: phoneNumberId || '',
+          accessToken,
+          messageId: message.id,
+        })
+
         // Send the chatbot reply via Meta API
         const chatPayload: Record<string, unknown> = {
           ...chatbotResult.payload,
