@@ -725,51 +725,89 @@ function validateNode(
       const cfg = node.config as Record<string, unknown>;
       const delay = typeof cfg.delay_amount === "number" ? cfg.delay_amount : 0;
       if (delay < 1 || delay > 672) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "delay_amount",
-          message: "Delay must be between 1 and 672.",
-        });
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "delay_amount", message: "Delay must be between 1 and 672." });
       }
       const messageType = typeof cfg.message_type === "string" ? cfg.message_type : "";
       const content = (cfg.message_content as Record<string, unknown>) || {};
       if (messageType === "text" && !content.text) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "message_content.text",
-          message: "Wait node text message needs content.",
-        });
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "message_content.text", message: "Wait node text message needs content." });
       }
       if (["image", "video", "audio", "file"].includes(messageType) && !content.media_url) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "message_content.media_url",
-          message: `Wait node ${messageType} needs a media URL.`,
-        });
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "message_content.media_url", message: `Wait node ${messageType} needs a media URL.` });
       }
       const nextKey = typeof cfg.next_node_key === "string" ? cfg.next_node_key : "";
       if (!nextKey) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "next_node_key",
-          message: "Wait node needs a next node.",
-        });
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: "Wait node needs a next node." });
       } else if (!knownKeys.has(nextKey)) {
-        issues.push({
-          severity: "error",
-          scope: "node",
-          node_key: node.node_key,
-          field: "next_node_key",
-          message: `Wait node points to non-existent node "${nextKey}".`,
-        });
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: `Wait node points to non-existent node "${nextKey}".` });
+      }
+      break;
+    }
+
+    case "send_image": {
+      const cfg = node.config as Record<string, unknown>;
+      if (!cfg.image_url) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "image_url", message: "Image URL is required." });
+      }
+      const next = cfg.next_node_key as string;
+      if (next && !knownKeys.has(next)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: `Points to non-existent node "${next}".` });
+      }
+      break;
+    }
+
+    case "send_document": {
+      const cfg = node.config as Record<string, unknown>;
+      if (!cfg.document_url) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "document_url", message: "Document URL is required." });
+      }
+      const next = cfg.next_node_key as string;
+      if (next && !knownKeys.has(next)) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "next_node_key", message: `Points to non-existent node "${next}".` });
+      }
+      break;
+    }
+
+    case "send_location": {
+      const cfg = node.config as Record<string, unknown>;
+      const lat = typeof cfg.latitude === "number" ? cfg.latitude : NaN;
+      const lng = typeof cfg.longitude === "number" ? cfg.longitude : NaN;
+      if (isNaN(lat) || lat < -90 || lat > 90) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "latitude", message: "Latitude must be between -90 and 90." });
+      }
+      if (isNaN(lng) || lng < -180 || lng > 180) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "longitude", message: "Longitude must be between -180 and 180." });
+      }
+      break;
+    }
+
+    case "send_contacts": {
+      const cfg = node.config as Record<string, unknown>;
+      const contacts = Array.isArray(cfg.contacts) ? cfg.contacts : [];
+      if (contacts.length === 0) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "contacts", message: "At least one contact is required." });
+      }
+      break;
+    }
+
+    case "send_cta_url": {
+      const cfg = node.config as Record<string, unknown>;
+      if (!cfg.body_text) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "body_text", message: "Body text is required." });
+      }
+      if (!cfg.button_text) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "button_text", message: "Button text is required." });
+      }
+      if (!cfg.url) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "url", message: "URL is required." });
+      }
+      break;
+    }
+
+    case "ask_location": {
+      const cfg = node.config as Record<string, unknown>;
+      if (!cfg.body_text) {
+        issues.push({ severity: "error", scope: "node", node_key: node.node_key, field: "body_text", message: "Prompt text is required." });
       }
       break;
     }

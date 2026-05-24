@@ -162,11 +162,15 @@ export default function NewChatbotReplyPage() {
       const ext = file.name.split('.').pop() || 'bin';
       const path = `${user.id}/chatbot/${Date.now()}.${ext}`;
       const { error } = await supabase.storage.from('template-media').upload(path, file, { upsert: true });
-      if (error) throw error;
+      if (error) throw new Error(error.message);
       const { data } = supabase.storage.from('template-media').getPublicUrl(path);
       setForm((f) => ({ ...f, header_content: data.publicUrl }));
       toast.success('Uploaded');
-    } catch { toast.error('Upload failed'); }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[Chatbot Upload]', msg);
+      toast.error(`Upload failed: ${msg}`);
+    }
     finally { setUploading(false); if (fileRef.current) fileRef.current.value = ''; }
   }
 

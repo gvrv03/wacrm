@@ -880,6 +880,28 @@ async function advanceFromNodeKey(
       await scheduleWaitSendMessage(db, run, node);
       return { outcome: "advanced" };
     }
+    if (
+      node.node_type === "send_image" ||
+      node.node_type === "send_document" ||
+      node.node_type === "send_location" ||
+      node.node_type === "send_contacts" ||
+      node.node_type === "send_cta_url" ||
+      node.node_type === "ask_location"
+    ) {
+      await executeMediaNode(db, run, node);
+      const cfg = node.config as Record<string, unknown>;
+      const nextKey = cfg.next_node_key as string;
+      if (nextKey) {
+        const advanced = await advanceCurrentNodeKey(db, run.id, run.current_node_key, nextKey);
+        if (!advanced) {
+          await logEvent(db, run.id, "error", node.node_key, { reason: "lost_race_during_advance" });
+        }
+      } else {
+        await endRun(db, run.id, "completed", "no_next_node");
+        return { outcome: "completed" };
+      }
+      return { outcome: "advanced" };
+    }
     // Unknown node type — shouldn't happen given the CHECK constraint.
     await logEvent(db, run.id, "error", node.node_key, {
       reason: `unknown_node_type:${node.node_type}`,
@@ -1349,5 +1371,187 @@ async function scheduleWaitSendMessage(
     scheduled_send_at: scheduledSendAt,
     delay_amount: delayAmount,
     delay_unit: delayUnit,
+  });
+}
+
+// ============================================================
+// Media / Location / Contacts / CTA URL node executor
+// ============================================================
+
+/**
+ * Sends image, document, location, contacts, or CTA URL messages
+ * via the WhatsApp Cloud API. Uses the user's stored credentials.
+ */
+async function executeMediaNode(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+): Promise<void> {
+  const cfg = node.config as Record<string, unknown>;
+  const vars = (run.vars as Record<string, unknown>) || {};
+  const interpolate = (s: string) =>
+    s.replace(/\{\{vars\.(\w+)\}\}/g, (_, k) => String(vars[k] ?? ""));
+
+  // Get WhatsApp credentials
+  const { data: waConfig } = await db
+    .from("whatsapp_config")
+    .select("phone_number_id, access_token")
+    .eq("user_id", run.user_id)
+    .maybeSingle();
+
+  if (!waConfig) {
+    await logEvent(db, run.id, "error", node.node_key, { reason: "no_whatsapp_config" });
+    return;
+  }
+
+  const { decrypt } = await import("@/lib/whatsapp/encryption");
+  const accessToken = decrypt(waConfig.access_token);
+  const phoneNumberId = waConfig.phone_number_id;
+
+  // Get contact phone
+  const { data: contact } = await db
+    .from("contacts")
+    .select("phone")
+    .eq("id", run.contact_id!)
+    .maybeSingle();
+
+  if (!contact?.phone) {
+    await logEvent(db, run.id, "error", node.node_key, { reason: "no_contact_phone" });
+    return;
+  }
+
+  const to = contact.phone.replace(/^\+/, "");
+  const metaUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+
+  let payload: Record<string, unknown> = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+  };
+
+  switch (node.node_type) {
+    case "send_image":
+      payload = {
+        ...payload,
+        type: "image",
+        image: {
+          link: interpolate((cfg.image_url as string) || ""),
+          ...(cfg.caption ? { caption: interpolate(cfg.caption as string) } : {}),
+        },
+      };
+      break;
+
+    case "send_document":
+      payload = {
+        ...payload,
+        type: "document",
+        document: {
+          link: interpolate((cfg.document_url as string) || ""),
+          ...(cfg.filename ? { filename: cfg.filename as string } : {}),
+          ...(cfg.caption ? { caption: interpolate(cfg.caption as string) } : {}),
+        },
+      };
+      break;
+
+    case "send_location":
+      payload = {
+        ...payload,
+        type: "location",
+        location: {
+          latitude: cfg.latitude as number,
+          longitude: cfg.longitude as number,
+          ...(cfg.name ? { name: cfg.name as string } : {}),
+          ...(cfg.address ? { address: cfg.address as string } : {}),
+        },
+      };
+      break;
+
+    case "send_contacts": {
+      const contacts = (cfg.contacts as Array<Record<string, unknown>>) || [];
+      payload = {
+        ...payload,
+        type: "contacts",
+        contacts: contacts.map((c) => ({
+          name: c.name,
+          phones: c.phones || [],
+          emails: c.emails || [],
+        })),
+      };
+      break;
+    }
+
+    case "send_cta_url":
+      payload = {
+        ...payload,
+        type: "interactive",
+        interactive: {
+          type: "cta_url",
+          body: { text: interpolate((cfg.body_text as string) || "") },
+          ...(cfg.footer_text ? { footer: { text: cfg.footer_text as string } } : {}),
+          action: {
+            name: "cta_url",
+            parameters: {
+              display_text: (cfg.button_text as string) || "Visit",
+              url: interpolate((cfg.url as string) || ""),
+            },
+          },
+        },
+      };
+      break;
+
+    case "ask_location":
+      payload = {
+        ...payload,
+        type: "interactive",
+        interactive: {
+          type: "location_request_message",
+          body: {
+            type: "text",
+            text: interpolate((cfg.body_text as string) || "Please share your location"),
+          },
+          action: {
+            name: "send_location",
+          },
+        },
+      };
+      break;
+  }
+
+  const res = await fetch(metaUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    await logEvent(db, run.id, "error", node.node_key, {
+      reason: "meta_send_failed",
+      status: res.status,
+      detail: (err as Record<string, unknown>)?.error || err,
+    });
+    return;
+  }
+
+  const data = await res.json();
+  const messageId = data?.messages?.[0]?.id;
+
+  await logEvent(db, run.id, "message_sent", node.node_key, {
+    node_type: node.node_type,
+    whatsapp_message_id: messageId,
+  });
+
+  // Store in messages table
+  await db.from("messages").insert({
+    conversation_id: run.conversation_id,
+    sender_type: "bot",
+    content_type: node.node_type === "send_cta_url" ? "interactive" : node.node_type.replace("send_", ""),
+    content_text: (cfg.caption as string) || (cfg.body_text as string) || `[${node.node_type}]`,
+    message_id: messageId,
+    status: "sent",
+    created_at: new Date().toISOString(),
   });
 }

@@ -97,7 +97,14 @@ export function deriveEdges(nodes: Node<FlowNodeData>[]): Edge[] {
       case "start":
       case "send_message":
       case "collect_input":
-      case "set_tag": {
+      case "set_tag":
+      case "send_image":
+      case "send_document":
+      case "send_location":
+      case "send_contacts":
+      case "send_cta_url":
+      case "ask_location":
+      case "wait_send_message": {
         const next = cfg.next_node_key as string | undefined;
         if (next && existingKeys.has(next)) {
           edges.push({
@@ -276,21 +283,6 @@ export function deriveEdges(nodes: Node<FlowNodeData>[]): Edge[] {
             animated: true,
             label: "Failure",
             style: { stroke: "hsl(0, 84%, 60%)" },
-          });
-        }
-        break;
-      }
-
-      case "wait_send_message": {
-        const next = cfg.next_node_key as string | undefined;
-        if (next && existingKeys.has(next)) {
-          edges.push({
-            id: `${node.id}->default->${next}`,
-            source: node.id,
-            target: next,
-            sourceHandle: "default",
-            type: "animated",
-            animated: true,
           });
         }
         break;

@@ -19,6 +19,11 @@ import {
   PlayCircle,
   Globe,
   Clock,
+  Image,
+  FileText,
+  MapPin,
+  Contact,
+  ExternalLink,
 } from "lucide-react";
 
 // ============================================================
@@ -33,6 +38,12 @@ export type NodeType =
   | "send_chatbot_reply"
   | "api_request"
   | "wait_send_message"
+  | "send_image"
+  | "send_document"
+  | "send_location"
+  | "send_contacts"
+  | "send_cta_url"
+  | "ask_location"
   | "collect_input"
   | "condition"
   | "set_tag"
@@ -149,6 +160,48 @@ export const NODE_META: Record<
     bgAccent: "bg-orange-50",
     category: "messaging",
   },
+  send_image: {
+    label: "Send Image",
+    icon: Image,
+    color: "text-blue-600",
+    bgAccent: "bg-blue-50",
+    category: "messaging",
+  },
+  send_document: {
+    label: "Send Document",
+    icon: FileText,
+    color: "text-slate-600",
+    bgAccent: "bg-slate-50",
+    category: "messaging",
+  },
+  send_location: {
+    label: "Send Location",
+    icon: MapPin,
+    color: "text-red-600",
+    bgAccent: "bg-red-50",
+    category: "messaging",
+  },
+  send_contacts: {
+    label: "Send Contacts",
+    icon: Contact,
+    color: "text-green-600",
+    bgAccent: "bg-green-50",
+    category: "messaging",
+  },
+  send_cta_url: {
+    label: "CTA URL Button",
+    icon: ExternalLink,
+    color: "text-blue-600",
+    bgAccent: "bg-blue-50",
+    category: "messaging",
+  },
+  ask_location: {
+    label: "Ask Location",
+    icon: MapPin,
+    color: "text-rose-600",
+    bgAccent: "bg-rose-50",
+    category: "messaging",
+  },
 };
 
 // ============================================================
@@ -248,6 +301,18 @@ export function defaultConfigFor(type: NodeType): Record<string, unknown> {
         message_content: { text: "" },
         next_node_key: "",
       };
+    case "send_image":
+      return { image_url: "", caption: "", next_node_key: "" };
+    case "send_document":
+      return { document_url: "", filename: "", caption: "", next_node_key: "" };
+    case "send_location":
+      return { latitude: 0, longitude: 0, name: "", address: "", next_node_key: "" };
+    case "send_contacts":
+      return { contacts: [{ name: { formatted_name: "" }, phones: [{ phone: "" }] }], next_node_key: "" };
+    case "send_cta_url":
+      return { body_text: "", footer_text: "", button_text: "", url: "", next_node_key: "" };
+    case "ask_location":
+      return { body_text: "", next_node_key: "" };
   }
 }
 
@@ -367,6 +432,30 @@ export function summarizeNode(node: BuilderNode): string | null {
       const unit = typeof cfg.delay_unit === "string" ? cfg.delay_unit : "hours";
       const type = typeof cfg.message_type === "string" ? cfg.message_type : "text";
       return `Wait ${amt} ${unit}, send ${type}`;
+    }
+    case "send_image": {
+      const url = typeof cfg.image_url === "string" ? cfg.image_url : "";
+      return url ? truncate(url, 40) : "No image URL";
+    }
+    case "send_document": {
+      const fn = typeof cfg.filename === "string" ? cfg.filename : "";
+      return fn || "Document";
+    }
+    case "send_location": {
+      const name = typeof cfg.name === "string" ? cfg.name : "";
+      return name || "Location";
+    }
+    case "send_contacts": {
+      const contacts = Array.isArray(cfg.contacts) ? cfg.contacts : [];
+      return `${contacts.length} contact(s)`;
+    }
+    case "send_cta_url": {
+      const text = typeof cfg.button_text === "string" ? cfg.button_text : "";
+      return text || "CTA Button";
+    }
+    case "ask_location": {
+      const text = typeof cfg.body_text === "string" ? cfg.body_text : "";
+      return text ? truncate(text, 40) : "Request location";
     }
   }
 }

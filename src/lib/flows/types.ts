@@ -229,6 +229,69 @@ export interface WaitSendMessageNodeConfig {
 // Terminal nodes carry no config — they just stop the run.
 export type EndNodeConfig = Record<string, never>;
 
+// ============================================================
+// Media / Location / Contacts / CTA URL Nodes
+// ============================================================
+
+export interface SendImageNodeConfig {
+  /** Public URL of the image (jpg, png, webp). Supports {{vars.X}}. */
+  image_url: string;
+  /** Optional caption text (max 1024 chars). */
+  caption?: string;
+  next_node_key: string;
+}
+
+export interface SendDocumentNodeConfig {
+  /** Public URL of the document (pdf, doc, etc). */
+  document_url: string;
+  /** Filename shown to the customer. */
+  filename?: string;
+  /** Optional caption. */
+  caption?: string;
+  next_node_key: string;
+}
+
+export interface SendLocationNodeConfig {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+  next_node_key: string;
+}
+
+export interface SendContactsNodeConfig {
+  /** Array of vCard-style contacts to share. */
+  contacts: Array<{
+    name: { formatted_name: string; first_name?: string; last_name?: string };
+    phones?: Array<{ phone: string; type?: string }>;
+    emails?: Array<{ email: string; type?: string }>;
+  }>;
+  next_node_key: string;
+}
+
+export interface SendCtaUrlNodeConfig {
+  /** Body text shown above the CTA button. */
+  body_text: string;
+  /** Optional footer text. */
+  footer_text?: string;
+  /** Button display text (max 20 chars). */
+  button_text: string;
+  /** URL the button opens. */
+  url: string;
+  next_node_key: string;
+}
+
+/**
+ * Ask Location — sends a location_request_message that prompts
+ * the customer to share their location via WhatsApp's native picker.
+ * Meta API: type "interactive", interactive.type "location_request_message"
+ */
+export interface AskLocationNodeConfig {
+  /** Prompt text shown to the customer. */
+  body_text: string;
+  next_node_key: string;
+}
+
 /**
  * Total union — every concrete node_type the v1 engine understands.
  * Add new node types here and the engine's switch will flag missing
@@ -245,6 +308,12 @@ export type FlowNodeConfig =
   | { node_type: "send_chatbot_reply"; config: SendChatbotReplyNodeConfig }
   | { node_type: "api_request"; config: ApiRequestNodeConfig }
   | { node_type: "wait_send_message"; config: WaitSendMessageNodeConfig }
+  | { node_type: "send_image"; config: SendImageNodeConfig }
+  | { node_type: "send_document"; config: SendDocumentNodeConfig }
+  | { node_type: "send_location"; config: SendLocationNodeConfig }
+  | { node_type: "send_contacts"; config: SendContactsNodeConfig }
+  | { node_type: "send_cta_url"; config: SendCtaUrlNodeConfig }
+  | { node_type: "ask_location"; config: AskLocationNodeConfig }
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }

@@ -55,7 +55,7 @@ export function MediaUpload({ value, onChange, mediaType, pathPrefix = '' }: Med
         .from('template-media')
         .upload(fileName, file, { upsert: true });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) throw new Error(uploadError.message);
 
       const { data: urlData } = supabase.storage
         .from('template-media')
@@ -64,8 +64,9 @@ export function MediaUpload({ value, onChange, mediaType, pathPrefix = '' }: Med
       onChange(urlData.publicUrl);
       toast.success('Media uploaded');
     } catch (err) {
-      console.error('Upload error:', err);
-      toast.error('Failed to upload media');
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[MediaUpload] Upload error:', msg);
+      toast.error(`Upload failed: ${msg}`);
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = '';

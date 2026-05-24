@@ -34,6 +34,14 @@ import type { ValidationIssue } from "@/lib/flows/validate";
 import type { ApiRequestNodeConfig, WaitSendMessageNodeConfig } from "@/lib/flows/types";
 import { ApiRequestForm } from "@/components/flows/nodes/api-request-form";
 import { WaitSendForm } from "@/components/flows/nodes/wait-send-form";
+import {
+  SendImageForm,
+  SendDocumentForm,
+  SendLocationForm,
+  SendContactsForm,
+  SendCtaUrlForm,
+  AskLocationForm,
+} from "@/components/flows/nodes/media-forms";
 
 import {
   NODE_META,
@@ -347,6 +355,36 @@ function NodeConfigForm({
             .map((n) => ({ key: n.node_key, label: `${n.node_type}: ${n.node_key}` }))}
           onChange={(patch) => onUpdateConfig(patch as Record<string, unknown>)}
         />
+      )}
+
+      {/* ---- Send Image ---- */}
+      {node.node_type === "send_image" && (
+        <SendImageForm config={cfg} onChange={onUpdateConfig} />
+      )}
+
+      {/* ---- Send Document ---- */}
+      {node.node_type === "send_document" && (
+        <SendDocumentForm config={cfg} onChange={onUpdateConfig} />
+      )}
+
+      {/* ---- Send Location ---- */}
+      {node.node_type === "send_location" && (
+        <SendLocationForm config={cfg} onChange={onUpdateConfig} />
+      )}
+
+      {/* ---- Send Contacts ---- */}
+      {node.node_type === "send_contacts" && (
+        <SendContactsForm config={cfg} onChange={onUpdateConfig} />
+      )}
+
+      {/* ---- CTA URL ---- */}
+      {node.node_type === "send_cta_url" && (
+        <SendCtaUrlForm config={cfg} onChange={onUpdateConfig} />
+      )}
+
+      {/* ---- Ask Location ---- */}
+      {node.node_type === "ask_location" && (
+        <AskLocationForm config={cfg} onChange={onUpdateConfig} />
       )}
 
       {/* Advanced: node_key editor */}
