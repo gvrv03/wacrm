@@ -391,6 +391,7 @@ export interface FlowRunRow {
   last_prompt_message_id: string | null;
   vars: Record<string, unknown>;
   reprompt_count: number;
+  scheduled_send_at: string | null;
   started_at: string;
   last_advanced_at: string;
   ended_at: string | null;

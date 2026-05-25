@@ -855,9 +855,25 @@ function outgoingEdges(node: NodeInput): string[] {
     case "start":
     case "send_message":
     case "collect_input":
-    case "set_tag": {
+    case "set_tag":
+    case "wait_send_message":
+    case "send_image":
+    case "send_document":
+    case "send_location":
+    case "send_contacts":
+    case "send_cta_url":
+    case "ask_location": {
       const cfg = node.config as { next_node_key?: string };
       return cfg.next_node_key ? [cfg.next_node_key] : [];
+    }
+    case "api_request": {
+      const cfg = node.config as {
+        success_next?: string;
+        failure_next?: string;
+      };
+      return [cfg.success_next, cfg.failure_next].filter(
+        (k): k is string => !!k,
+      );
     }
     case "condition": {
       const cfg = node.config as {

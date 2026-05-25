@@ -38,6 +38,13 @@ import {
   engineSendInteractiveList,
   engineSendText,
 } from "./meta-send";
+import { decrypt } from "@/lib/whatsapp/encryption";
+import {
+  isRecipientNotAllowedError,
+  isValidE164,
+  phoneVariants,
+  sanitizePhoneForMeta,
+} from "@/lib/whatsapp/phone-utils";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import {
   type CollectInputNodeConfig,
@@ -844,40 +851,34 @@ async function advanceFromNodeKey(
     }
     if (node.node_type === "send_chatbot_reply") {
       await sendChatbotReplyAndAdvance(db, run, node);
-      const advanced = await advanceCurrentNodeKey(
-        db,
-        run.id,
-        run.current_node_key,
-        node.node_key,
-      );
-      if (!advanced) {
-        await logEvent(db, run.id, "error", node.node_key, {
-          reason: "lost_race_during_advance",
-        });
+      const cfg = node.config as Record<string, unknown>;
+      const hasReplyRoutes =
+        ((cfg.button_routes as unknown[]) ?? []).length > 0 ||
+        ((cfg.row_routes as unknown[]) ?? []).length > 0;
+      const nextKey = typeof cfg.next_node_key === "string" ? cfg.next_node_key : "";
+      if (!hasReplyRoutes && nextKey) {
+        currentKey = nextKey;
+        continue;
       }
+      await persistSuspendedNode(db, run.id, run.current_node_key, node.node_key);
       return { outcome: "advanced" };
     }
     if (node.node_type === "api_request") {
       const next = await executeApiRequest(db, run, node);
-      const advanced = await advanceCurrentNodeKey(
-        db,
-        run.id,
-        run.current_node_key,
-        next || node.node_key,
-      );
-      if (!advanced) {
-        await logEvent(db, run.id, "error", node.node_key, {
-          reason: "lost_race_during_advance",
-        });
-      }
       if (!next) {
         await endRun(db, run.id, "failed", "api_request_no_failure_path");
         return { outcome: "completed" };
       }
-      return { outcome: "advanced" };
+      currentKey = next;
+      continue;
     }
     if (node.node_type === "wait_send_message") {
-      await scheduleWaitSendMessage(db, run, node);
+      const scheduled = await scheduleWaitSendMessage(db, run, node);
+      if (!scheduled) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "lost_race_during_wait_schedule",
+        });
+      }
       return { outcome: "advanced" };
     }
     if (
@@ -892,10 +893,8 @@ async function advanceFromNodeKey(
       const cfg = node.config as Record<string, unknown>;
       const nextKey = cfg.next_node_key as string;
       if (nextKey) {
-        const advanced = await advanceCurrentNodeKey(db, run.id, run.current_node_key, nextKey);
-        if (!advanced) {
-          await logEvent(db, run.id, "error", node.node_key, { reason: "lost_race_during_advance" });
-        }
+        currentKey = nextKey;
+        continue;
       } else {
         await endRun(db, run.id, "completed", "no_next_node");
         return { outcome: "completed" };
@@ -950,6 +949,25 @@ async function advanceCurrentNodeKey(
     return false;
   }
   return Array.isArray(data) && data.length > 0;
+}
+
+async function persistSuspendedNode(
+  db: AdminClient,
+  runId: string,
+  expectedOldKey: string | null,
+  nodeKey: string,
+): Promise<void> {
+  const advanced = await advanceCurrentNodeKey(
+    db,
+    runId,
+    expectedOldKey,
+    nodeKey,
+  );
+  if (!advanced) {
+    await logEvent(db, runId, "error", nodeKey, {
+      reason: "lost_race_during_advance",
+    });
+  }
 }
 
 // ============================================================
@@ -1342,7 +1360,7 @@ async function scheduleWaitSendMessage(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
-): Promise<void> {
+): Promise<boolean> {
   const cfg = node.config as Record<string, unknown>;
   const delayAmount = (cfg.delay_amount as number) || 1;
   const delayUnit = (cfg.delay_unit as string) || "hours";
@@ -1361,10 +1379,22 @@ async function scheduleWaitSendMessage(
       : Date.now();
   const scheduledSendAt = new Date(baseTs + delayMs).toISOString();
 
-  await db
+  let q = db
     .from("flow_runs")
-    .update({ scheduled_send_at: scheduledSendAt })
-    .eq("id", run.id);
+    .update({
+      current_node_key: node.node_key,
+      scheduled_send_at: scheduledSendAt,
+      last_advanced_at: new Date().toISOString(),
+    })
+    .eq("id", run.id)
+    .eq("status", "active");
+  if (run.current_node_key === null) {
+    q = q.is("current_node_key", null);
+  } else {
+    q = q.eq("current_node_key", run.current_node_key);
+  }
+  const { data, error } = await q.select("id");
+  const scheduled = !error && Array.isArray(data) && data.length > 0;
 
   await logEvent(db, run.id, "node_entered", node.node_key, {
     node_type: "wait_send_message",
@@ -1372,6 +1402,340 @@ async function scheduleWaitSendMessage(
     delay_amount: delayAmount,
     delay_unit: delayUnit,
   });
+  return scheduled;
+}
+
+export async function processDueWaitSends(
+  db: AdminClient = supabaseAdmin(),
+  now: Date = new Date(),
+  limit = 50,
+): Promise<{ waitProcessed: number; waitFailed: number }> {
+  const { data: waitRuns, error } = await db
+    .from("flow_runs")
+    .select("*")
+    .eq("status", "active")
+    .not("scheduled_send_at", "is", null)
+    .lte("scheduled_send_at", now.toISOString())
+    .limit(limit);
+
+  if (error) {
+    console.error("[flows] due wait scan failed:", error.message);
+    throw error;
+  }
+
+  let waitProcessed = 0;
+  let waitFailed = 0;
+
+  for (const run of (waitRuns ?? []) as FlowRunRow[]) {
+    try {
+      if (!run.current_node_key) {
+        await failWaitRun(db, run.id, now, "wait_run_missing_current_node");
+        waitFailed += 1;
+        continue;
+      }
+
+      const nodes = await loadAllNodes(db, run.flow_id);
+      const node = nodes.get(run.current_node_key);
+      if (!node || node.node_type !== "wait_send_message") {
+        await failWaitRun(db, run.id, now, "wait_node_not_found");
+        waitFailed += 1;
+        continue;
+      }
+
+      const claimed = await claimDueWaitRun(db, run, now);
+      if (!claimed) continue;
+
+      await sendWaitConfiguredMessage(db, run, node);
+      const cfg = node.config as Record<string, unknown>;
+      const nextKey = typeof cfg.next_node_key === "string" ? cfg.next_node_key : "";
+      await logEvent(db, run.id, "message_sent", node.node_key, {
+        node_type: "wait_send_message",
+        message_type: cfg.message_type,
+      });
+
+      if (!nextKey) {
+        await endRun(db, run.id, "completed", "wait_send_no_next");
+      } else {
+        run.scheduled_send_at = null;
+        run.last_advanced_at = now.toISOString();
+        await advanceFromNodeKey(db, run, nextKey, nodes);
+      }
+      waitProcessed += 1;
+    } catch (err) {
+      console.error("[flows] wait_send failed:", err);
+      await logEvent(db, run.id, "error", run.current_node_key, {
+        node_type: "wait_send_message",
+        reason: "send_failed",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+      await failWaitRun(db, run.id, now, "wait_send_failed");
+      waitFailed += 1;
+    }
+  }
+
+  return { waitProcessed, waitFailed };
+}
+
+async function claimDueWaitRun(
+  db: AdminClient,
+  run: FlowRunRow,
+  now: Date,
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("flow_runs")
+    .update({
+      scheduled_send_at: null,
+      last_advanced_at: now.toISOString(),
+    })
+    .eq("id", run.id)
+    .eq("status", "active")
+    .eq("current_node_key", run.current_node_key)
+    .not("scheduled_send_at", "is", null)
+    .lte("scheduled_send_at", now.toISOString())
+    .select("id");
+  if (error) {
+    console.error("[flows] wait claim failed:", error.message);
+    return false;
+  }
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function failWaitRun(
+  db: AdminClient,
+  runId: string,
+  now: Date,
+  reason: string,
+): Promise<void> {
+  await db
+    .from("flow_runs")
+    .update({
+      status: "failed",
+      scheduled_send_at: null,
+      ended_at: now.toISOString(),
+      end_reason: reason,
+    })
+    .eq("id", runId)
+    .eq("status", "active");
+}
+
+async function sendWaitConfiguredMessage(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+): Promise<void> {
+  const cfg = node.config as Record<string, unknown>;
+  const messageType = (cfg.message_type as string) || "text";
+  const content = (cfg.message_content as Record<string, unknown>) || {};
+  const vars = (run.vars as Record<string, unknown>) || {};
+  const interpolate = (s: string) =>
+    s.replace(/\{\{vars\.(\w+)\}\}/g, (_, k) => String(vars[k] ?? ""));
+
+  if (messageType === "text") {
+    await engineSendText({
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      text: interpolate((content.text as string) || ""),
+    });
+    return;
+  }
+
+  if (messageType === "interactive") {
+    await engineSendInteractiveButtons({
+      userId: run.user_id,
+      conversationId: run.conversation_id!,
+      contactId: run.contact_id!,
+      bodyText: interpolate((content.text as string) || ""),
+      headerText: content.header_text as string | undefined,
+      footerText: content.footer_text as string | undefined,
+      buttons: ((content.buttons as Array<{ reply_id: string; title: string }>) ?? []).map(
+        (b) => ({ id: b.reply_id, title: b.title }),
+      ),
+    });
+    return;
+  }
+
+  await sendRawWaitMessage(db, {
+    userId: run.user_id,
+    conversationId: run.conversation_id!,
+    contactId: run.contact_id!,
+    messageType,
+    content,
+    interpolate,
+  });
+}
+
+async function sendRawWaitMessage(
+  db: AdminClient,
+  args: {
+    userId: string;
+    conversationId: string;
+    contactId: string;
+    messageType: string;
+    content: Record<string, unknown>;
+    interpolate: (s: string) => string;
+  },
+): Promise<void> {
+  const context = await loadMetaSendContext(db, args.userId, args.contactId);
+  const base = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: context.to,
+  };
+  const mediaUrl = args.interpolate((args.content.media_url as string) || "");
+  const text = args.interpolate((args.content.text as string) || "");
+
+  let payload: Record<string, unknown>;
+  let contentType = args.messageType;
+  let contentText = text || `[${args.messageType} message]`;
+
+  if (args.messageType === "image" || args.messageType === "video" || args.messageType === "audio") {
+    payload = {
+      ...base,
+      type: args.messageType,
+      [args.messageType]: {
+        link: mediaUrl,
+        ...(text && args.messageType !== "audio" ? { caption: text } : {}),
+      },
+    };
+  } else if (args.messageType === "file") {
+    contentType = "document";
+    payload = {
+      ...base,
+      type: "document",
+      document: {
+        link: mediaUrl,
+        ...(args.content.filename ? { filename: args.content.filename as string } : {}),
+        ...(text ? { caption: text } : {}),
+      },
+    };
+  } else if (args.messageType === "location") {
+    payload = {
+      ...base,
+      type: "location",
+      location: {
+        latitude: args.content.latitude as number,
+        longitude: args.content.longitude as number,
+        ...(args.content.location_name ? { name: args.content.location_name as string } : {}),
+        ...(args.content.location_address ? { address: args.content.location_address as string } : {}),
+      },
+    };
+    contentText = [
+      args.content.location_name,
+      args.content.location_address,
+      `${args.content.latitude},${args.content.longitude}`,
+    ]
+      .filter(Boolean)
+      .join(" - ");
+  } else {
+    throw new Error(`Unsupported wait message type: ${args.messageType}`);
+  }
+
+  const messageId = await postMetaPayloadWithPhoneRetry(db, context, payload);
+  await db.from("messages").insert({
+    conversation_id: args.conversationId,
+    sender_type: "bot",
+    content_type: contentType,
+    content_text: contentText,
+    media_url: mediaUrl || null,
+    message_id: messageId,
+    status: "sent",
+  });
+  await db
+    .from("conversations")
+    .update({
+      last_message_text: contentText,
+      last_message_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", args.conversationId);
+}
+
+async function loadMetaSendContext(
+  db: AdminClient,
+  userId: string,
+  contactId: string,
+): Promise<{
+  contactId: string;
+  sanitized: string;
+  to: string;
+  phoneNumberId: string;
+  accessToken: string;
+}> {
+  const { data: contact, error: contactErr } = await db
+    .from("contacts")
+    .select("id, phone")
+    .eq("id", contactId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (contactErr || !contact?.phone) throw new Error("contact not found for this user");
+
+  const sanitized = sanitizePhoneForMeta(contact.phone);
+  if (!isValidE164(sanitized)) throw new Error(`contact phone invalid: ${contact.phone}`);
+
+  const { data: config, error: configErr } = await db
+    .from("whatsapp_config")
+    .select("phone_number_id, access_token")
+    .eq("user_id", userId)
+    .single();
+  if (configErr || !config) throw new Error("WhatsApp not configured for this account");
+
+  return {
+    contactId: contact.id,
+    sanitized,
+    to: sanitized,
+    phoneNumberId: config.phone_number_id,
+    accessToken: decrypt(config.access_token),
+  };
+}
+
+async function postMetaPayloadWithPhoneRetry(
+  db: AdminClient,
+  context: Awaited<ReturnType<typeof loadMetaSendContext>>,
+  payload: Record<string, unknown>,
+): Promise<string> {
+  const metaUrl = `https://graph.facebook.com/v21.0/${context.phoneNumberId}/messages`;
+  let workingPhone = context.sanitized;
+  let messageId = "";
+  let lastError: unknown = null;
+
+  for (const phone of phoneVariants(context.sanitized)) {
+    const nextPayload = { ...payload, to: phone };
+    try {
+      const res = await fetch(metaUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${context.accessToken}`,
+        },
+        body: JSON.stringify(nextPayload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg =
+          (err as { error?: { message?: string } }).error?.message ??
+          `Meta API error: ${res.status}`;
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      messageId = data?.messages?.[0]?.id ?? "";
+      workingPhone = phone;
+      lastError = null;
+      break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!isRecipientNotAllowedError(msg)) throw err;
+      lastError = err;
+    }
+  }
+
+  if (lastError) throw lastError;
+  if (!messageId) throw new Error("Meta send succeeded without a message id");
+
+  if (workingPhone !== context.sanitized) {
+    await db.from("contacts").update({ phone: workingPhone }).eq("id", context.contactId);
+  }
+  return messageId;
 }
 
 // ============================================================

@@ -450,4 +450,33 @@ describe("reachableFromEntry", () => {
     const set = reachableFromEntry("a", nodes);
     expect(set).toEqual(new Set(["a", "b"]));
   });
+
+  it("walks newer integration, wait, and media node edges", () => {
+    const nodes = [
+      { node_key: "s", node_type: "start", config: { next_node_key: "api" } },
+      {
+        node_key: "api",
+        node_type: "api_request",
+        config: { success_next: "wait", failure_next: "img" },
+      },
+      {
+        node_key: "wait",
+        node_type: "wait_send_message",
+        config: { next_node_key: "cta" },
+      },
+      {
+        node_key: "img",
+        node_type: "send_image",
+        config: { next_node_key: "cta" },
+      },
+      {
+        node_key: "cta",
+        node_type: "send_cta_url",
+        config: { next_node_key: "end" },
+      },
+      { node_key: "end", node_type: "end", config: {} },
+    ];
+    const set = reachableFromEntry("s", nodes);
+    expect(set).toEqual(new Set(["s", "api", "wait", "img", "cta", "end"]));
+  });
 });

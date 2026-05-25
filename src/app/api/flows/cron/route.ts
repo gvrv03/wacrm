@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { resolveFallbackPolicy } from '@/lib/flows/fallback'
-import { engineSendText, engineSendInteractiveButtons } from '@/lib/flows/meta-send'
+import { processDueWaitSends } from '@/lib/flows/engine'
 
 /**
  * Sweep abandoned active flow runs.
@@ -109,128 +109,7 @@ export async function GET(request: Request) {
     }
   }
 
-  // ============================================================
-  // Process scheduled wait_send_message nodes
-  // ============================================================
-  let waitProcessed = 0;
-  let waitFailed = 0;
-
-  const { data: waitRuns } = await admin
-    .from('flow_runs')
-    .select('id, flow_id, user_id, contact_id, conversation_id, current_node_key, vars, last_advanced_at')
-    .eq('status', 'active')
-    .not('scheduled_send_at', 'is', null)
-    .lte('scheduled_send_at', now.toISOString())
-    .limit(50);
-
-  if (waitRuns && waitRuns.length > 0) {
-    for (const run of waitRuns) {
-      try {
-        // Fetch the current node config
-        const { data: node } = await admin
-          .from('flow_nodes')
-          .select('*')
-          .eq('flow_id', run.flow_id)
-          .eq('node_key', run.current_node_key)
-          .maybeSingle();
-
-        if (!node || node.node_type !== 'wait_send_message') {
-          // Clear the scheduled_send_at — node was changed or removed
-          await admin.from('flow_runs').update({ scheduled_send_at: null }).eq('id', run.id);
-          continue;
-        }
-
-        const cfg = node.config as Record<string, unknown>;
-        const messageType = cfg.message_type as string;
-        const content = (cfg.message_content as Record<string, unknown>) || {};
-        const nextNodeKey = cfg.next_node_key as string;
-        const vars = (run.vars as Record<string, unknown>) || {};
-
-        // Variable interpolation
-        const interpolate = (s: string) =>
-          s.replace(/\{\{vars\.(\w+)\}\}/g, (_, k) => String(vars[k] ?? ''));
-
-        // Send based on message type
-        if (messageType === 'text' && content.text) {
-          await engineSendText({
-            userId: run.user_id,
-            conversationId: run.conversation_id!,
-            contactId: run.contact_id!,
-            text: interpolate(content.text as string),
-          });
-        } else if (messageType === 'interactive' && content.buttons) {
-          await engineSendInteractiveButtons({
-            userId: run.user_id,
-            conversationId: run.conversation_id!,
-            contactId: run.contact_id!,
-            bodyText: interpolate((content.text as string) || ''),
-            headerText: content.header_text as string | undefined,
-            footerText: content.footer_text as string | undefined,
-            buttons: (content.buttons as Array<{ reply_id: string; title: string }>).map((b) => ({
-              id: b.reply_id,
-              title: b.title,
-            })),
-          });
-        } else {
-          // For media types, use a simple text fallback (full media support requires meta-api integration)
-          await engineSendText({
-            userId: run.user_id,
-            conversationId: run.conversation_id!,
-            contactId: run.contact_id!,
-            text: interpolate((content.text as string) || `[${messageType} message]`),
-          });
-        }
-
-        // Log success and advance
-        await admin.from('flow_run_events').insert({
-          flow_run_id: run.id,
-          event_type: 'message_sent',
-          node_key: run.current_node_key,
-          payload: { node_type: 'wait_send_message', message_type: messageType },
-        });
-
-        // Clear scheduled_send_at and advance to next node
-        await admin
-          .from('flow_runs')
-          .update({
-            scheduled_send_at: null,
-            current_node_key: nextNodeKey || run.current_node_key,
-            last_advanced_at: now.toISOString(),
-          })
-          .eq('id', run.id);
-
-        if (!nextNodeKey) {
-          // No next node — end the run
-          await admin
-            .from('flow_runs')
-            .update({ status: 'completed', ended_at: now.toISOString(), end_reason: 'wait_send_no_next' })
-            .eq('id', run.id);
-        }
-
-        waitProcessed += 1;
-      } catch (err) {
-        console.error('[flows-cron] wait_send failed:', err);
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        await admin.from('flow_run_events').insert({
-          flow_run_id: run.id,
-          event_type: 'error',
-          node_key: run.current_node_key,
-          payload: { node_type: 'wait_send_message', reason: 'send_failed', detail: message },
-        });
-        // Mark as failed and clear schedule
-        await admin
-          .from('flow_runs')
-          .update({
-            status: 'failed',
-            scheduled_send_at: null,
-            ended_at: now.toISOString(),
-            end_reason: 'wait_send_failed',
-          })
-          .eq('id', run.id);
-        waitFailed += 1;
-      }
-    }
-  }
+  const { waitProcessed, waitFailed } = await processDueWaitSends(admin, now)
 
   return NextResponse.json({ swept, waitProcessed, waitFailed });
 }
