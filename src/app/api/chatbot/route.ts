@@ -52,6 +52,7 @@ export async function POST(request: Request) {
     list_button_text: body.list_button_text || 'View Options',
     cta_button_text: body.cta_button_text || null,
     cta_button_url: body.cta_button_url || null,
+    carousel_cards: body.carousel_cards || null,
     trigger_type: body.trigger_type || 'contains',
     trigger_value: body.trigger_value?.trim() || null,
     case_sensitive: !!body.case_sensitive,

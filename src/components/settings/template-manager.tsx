@@ -288,47 +288,62 @@ export function TemplateManager() {
       </div>
 
       {templates.length === 0 ? (
-        <Card className="bg-card border-border ring-0 ring-transparent">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-muted-foreground text-sm">No templates yet.</p>
-            <p className="text-muted-foreground text-xs mt-1">Create your first message template to get started.</p>
+        <Card className=" py-0 bg-card border-border">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 mb-3">
+              <Plus className="size-5 text-primary" />
+            </div>
+            <p className="text-foreground font-medium">No templates yet</p>
+            <p className="text-muted-foreground text-sm mt-1 max-w-sm">Create your first message template or sync approved templates from Meta.</p>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {templates.map((template) => (
-            <Card key={template.id} className="bg-card border-border ring-0 ring-transparent">
-              <CardContent className="flex items-start justify-between pt-4">
-                <div className="space-y-2 min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="font-medium text-foreground">{template.name}</h3>
-                    <Badge
-                      className={`text-xs border ${categoryColors[template.category] || ''}`}
-                    >
-                      {template.category}
-                    </Badge>
-                    <Badge
-                      className={`text-xs border ${statusColors[template.status || 'Draft'] || ''}`}
-                    >
-                      {template.status || 'Draft'}
-                    </Badge>
+            <Card key={template.id} className=" py-0 bg-card border-border group hover:shadow-md transition-shadow relative overflow-hidden">
+              {/* Status accent bar */}
+              <div className={`h-1 ${template.status === 'Approved' ? 'bg-emerald-500' : template.status === 'Rejected' ? 'bg-red-500' : template.status === 'Pending' ? 'bg-yellow-500' : 'bg-slate-300'}`} />
+
+              <CardContent className="p-4 space-y-3">
+                {/* Header: name + delete */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-foreground text-sm truncate font-mono">{template.name}</h3>
                     {template.language && (
-                      <span className="text-xs text-muted-foreground uppercase">{template.language}</span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{template.language}</span>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground line-clamp-2">{template.body_text}</p>
-                  {template.footer_text && (
-                    <p className="text-xs text-muted-foreground italic">{template.footer_text}</p>
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleDelete(template.id)}
+                    className="size-7 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleDelete(template.id)}
-                  className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 shrink-0 ml-2"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+
+                {/* Badges */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Badge className={`text-[10px] border px-1.5 py-0 ${categoryColors[template.category] || ''}`}>
+                    {template.category}
+                  </Badge>
+                  <Badge className={`text-[10px] border px-1.5 py-0 ${statusColors[template.status || 'Draft'] || ''}`}>
+                    {template.status || 'Draft'}
+                  </Badge>
+                </div>
+
+                {/* Body preview */}
+                <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed min-h-[3rem]">
+                  {template.body_text || 'No body text'}
+                </p>
+
+                {/* Footer */}
+                {template.footer_text && (
+                  <p className="text-[10px] text-muted-foreground/70 italic border-t border-border pt-2 truncate">
+                    {template.footer_text}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}

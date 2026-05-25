@@ -1456,6 +1456,12 @@ export async function processDueWaitSends(
       if (!nextKey) {
         await endRun(db, run.id, "completed", "wait_send_no_next");
       } else {
+        // Update current_node_key in DB before advancing
+        await db
+          .from("flow_runs")
+          .update({ current_node_key: nextKey, last_advanced_at: now.toISOString() })
+          .eq("id", run.id);
+        run.current_node_key = nextKey;
         run.scheduled_send_at = null;
         run.last_advanced_at = now.toISOString();
         await advanceFromNodeKey(db, run, nextKey, nodes);

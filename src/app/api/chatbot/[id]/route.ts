@@ -20,7 +20,7 @@ export async function PATCH(
   const allowedFields = [
     'name', 'reply_type', 'reply_text', 'header_type', 'header_content',
     'footer_text', 'buttons', 'list_sections', 'list_button_text',
-    'cta_button_text', 'cta_button_url', 'trigger_type', 'trigger_value',
+    'cta_button_text', 'cta_button_url', 'carousel_cards', 'trigger_type', 'trigger_value',
     'case_sensitive', 'is_active', 'priority',
   ];
 
